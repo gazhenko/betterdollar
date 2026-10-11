@@ -1,83 +1,66 @@
 #!/usr/bin/env swift
-// Renders the BetterDollar app icon: an engraved guilloche rosette, like the security
-// printing on a banknote, around a dollar sign. Usage: swift tools/render-icon.swift
+// Renders the BetterDollar app icon: a serif B engraved with fine horizontal hatching,
+// like the lettering on a banknote. Usage: swift tools/render-icon.swift [appiconset-dir]
 import AppKit
+import CoreText
 
 let size: CGFloat = 1024
 let output = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "BetterDollar/Resources/Assets.xcassets/AppIcon.appiconset")
 
-struct Palette { let paper: NSColor; let ink: NSColor; let fine: NSColor }
-let light = Palette(paper: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.937, alpha: 1),
-                    ink: NSColor(srgbRed: 0.122, green: 0.302, blue: 0.227, alpha: 1),
-                    fine: NSColor(srgbRed: 0.122, green: 0.302, blue: 0.227, alpha: 0.55))
-let dark = Palette(paper: NSColor(srgbRed: 0.051, green: 0.102, blue: 0.082, alpha: 1),
-                   ink: NSColor(srgbRed: 0.612, green: 0.784, blue: 0.682, alpha: 1),
-                   fine: NSColor(srgbRed: 0.612, green: 0.784, blue: 0.682, alpha: 0.5))
-
-/// A hypotrochoid: the curve traced by a point on a circle rolling inside another circle.
-func rosette(center: CGPoint, outer R: CGFloat, inner r: CGFloat, pen d: CGFloat, rotation: CGFloat, scale: CGFloat) -> CGPath {
-    let path = CGMutablePath()
-    let loops = r / gcd(Int(R), Int(r))
-    let steps = 2400
-    for step in 0...steps {
-        let t = CGFloat(step) / CGFloat(steps) * 2 * .pi * loops
-        let x = (R - r) * cos(t) + d * cos((R - r) / r * t)
-        let y = (R - r) * sin(t) - d * sin((R - r) / r * t)
-        let rx = x * cos(rotation) - y * sin(rotation), ry = x * sin(rotation) + y * cos(rotation)
-        let point = CGPoint(x: center.x + rx * scale, y: center.y + ry * scale)
-        step == 0 ? path.move(to: point) : path.addLine(to: point)
-    }
-    path.closeSubpath()
-    return path
+func rgb(_ hex: UInt32) -> CGColor {
+    CGColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
 }
 
-func gcd(_ a: Int, _ b: Int) -> CGFloat { b == 0 ? CGFloat(a) : gcd(b, a % b) }
+/// The outline of a single character in the system serif face, scaled so its height is `height` and centered.
+func glyphPath(_ character: String, height: CGFloat, center: CGPoint) -> CGPath {
+    let descriptor = NSFont.systemFont(ofSize: 100, weight: .heavy).fontDescriptor.withDesign(.serif)!
+    let font = NSFont(descriptor: descriptor, size: 100)! as CTFont
+    var glyph = CGGlyph(0)
+    var unichar = Array(character.utf16)
+    CTFontGetGlyphsForCharacters(font, &unichar, &glyph, 1)
+    let raw = CTFontCreatePathForGlyph(font, glyph, nil)!
+    let box = raw.boundingBoxOfPath
+    let scale = height / box.height
+    var transform = CGAffineTransform(translationX: center.x, y: center.y)
+        .scaledBy(x: scale, y: scale)
+        .translatedBy(x: -box.midX, y: -box.midY)
+    return raw.copy(using: &transform)!
+}
 
-func render(_ palette: Palette, to url: URL) throws {
+func render(background: UInt32, ink: UInt32, to url: URL) throws {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8,
                                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    let context = NSGraphicsContext.current!.cgContext
-    context.setFillColor(palette.paper.cgColor)
-    context.fill(CGRect(x: 0, y: 0, width: size, height: size))
-    let center = CGPoint(x: size / 2, y: size / 2)
+    let ctx = NSGraphicsContext.current!.cgContext
+    ctx.setFillColor(rgb(background))
+    ctx.fill(CGRect(x: 0, y: 0, width: size, height: size))
 
-    // Fine engraved band: many slightly rotated rosettes.
-    context.setLineWidth(1.6)
-    context.setStrokeColor(palette.fine.cgColor)
-    for index in 0..<18 {
-        let path = rosette(center: center, outer: 96, inner: 36, pen: 52, rotation: CGFloat(index) * .pi / 90, scale: 4.6)
-        context.addPath(path)
-        context.strokePath()
+    // Nudged right of center: the B's bowls carry more visual weight than its stem.
+    let letter = glyphPath("B", height: 760, center: CGPoint(x: size / 2 + 8, y: size / 2))
+    ctx.saveGState()
+    ctx.addPath(letter)
+    ctx.clip()
+    ctx.setStrokeColor(rgb(ink))
+    ctx.setLineWidth(8)
+    var y: CGFloat = 0
+    while y < size {
+        ctx.move(to: CGPoint(x: 0, y: y))
+        ctx.addLine(to: CGPoint(x: size, y: y))
+        y += 15
     }
-    // Bolder inner rosette.
-    context.setLineWidth(3)
-    context.setStrokeColor(palette.ink.withAlphaComponent(0.85).cgColor)
-    for index in 0..<3 {
-        context.addPath(rosette(center: center, outer: 60, inner: 25, pen: 22, rotation: CGFloat(index) * .pi / 60, scale: 4.3))
-        context.strokePath()
-    }
-    // Medallion.
-    let medallion = CGRect(x: center.x - 190, y: center.y - 190, width: 380, height: 380)
-    context.setFillColor(palette.paper.cgColor)
-    context.fillEllipse(in: medallion)
-    context.setLineWidth(10)
-    context.setStrokeColor(palette.ink.cgColor)
-    context.strokeEllipse(in: medallion.insetBy(dx: 14, dy: 14))
-    context.setLineWidth(3)
-    context.strokeEllipse(in: medallion.insetBy(dx: 34, dy: 34))
-
-    let descriptor = NSFont.systemFont(ofSize: 300, weight: .bold).fontDescriptor.withDesign(.serif)!
-    let font = NSFont(descriptor: descriptor, size: 300)!
-    let text = NSAttributedString(string: "$", attributes: [.font: font, .foregroundColor: palette.ink])
-    let bounds = text.boundingRect(with: NSSize(width: size, height: size), options: [.usesDeviceMetrics])
-    text.draw(at: NSPoint(x: center.x - bounds.width / 2 - bounds.origin.x, y: center.y - bounds.height / 2 - bounds.origin.y))
+    ctx.strokePath()
+    ctx.restoreGState()
+    ctx.addPath(letter)
+    ctx.setLineWidth(11)
+    ctx.setLineJoin(.round)
+    ctx.setStrokeColor(rgb(ink))
+    ctx.strokePath()
 
     NSGraphicsContext.restoreGraphicsState()
     try rep.representation(using: .png, properties: [:])!.write(to: url)
 }
 
-try render(light, to: output.appendingPathComponent("AppIcon.png"))
-try render(dark, to: output.appendingPathComponent("AppIcon-Dark.png"))
+try render(background: 0xF2F4EF, ink: 0x1F4D3A, to: output.appendingPathComponent("AppIcon.png"))
+try render(background: 0x0A1712, ink: 0x9CC8AE, to: output.appendingPathComponent("AppIcon-Dark.png"))
 print("Wrote icons to \(output.path)")
