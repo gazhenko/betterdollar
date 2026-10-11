@@ -1,0 +1,85 @@
+name: BetterDollar
+options:
+  minimumXcodeGenVersion: 2.46.0
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  BetterDollarCore:
+    path: Packages/BetterDollarCore
+  # Optional on-device coach: Apple Foundation Models plus open models through MLX (mlx-swift-lm).
+  BetterDollarCoach:
+    path: Packages/BetterDollarCoach
+targets:
+  BetterDollar:
+    type: application
+    platform: iOS
+    sources:
+      - path: BetterDollar
+        excludes:
+          - Support/Info.plist
+          - Resources
+      - path: BetterDollar/Resources
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - package: BetterDollarCore
+      - package: BetterDollarCoach
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gazhenko.betterdollar
+        PRODUCT_NAME: BetterDollar
+        INFOPLIST_FILE: BetterDollar/Support/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BetterDollar/Support/BetterDollar.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  BetterDollarUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - BetterDollarUITests
+    dependencies:
+      - target: BetterDollar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gazhenko.betterdollar.uitests
+        GENERATE_INFOPLIST_FILE: YES
+  BetterDollarCoreChecks:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Packages/BetterDollarCore/Tests/BetterDollarCoreTests
+    dependencies:
+      - package: BetterDollarCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gazhenko.betterdollar.corechecks
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  BetterDollar:
+    build:
+      targets:
+        BetterDollar: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BetterDollarUITests
+  BetterDollarCore:
+    build:
+      targets:
+        BetterDollarCoreChecks: all
+    test:
+      config: Debug
+      targets:
+        - BetterDollarCoreChecks
