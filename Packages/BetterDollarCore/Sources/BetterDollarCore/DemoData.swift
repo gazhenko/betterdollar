@@ -123,4 +123,35 @@ import SwiftData
         }
         try? context.save()
     }
+
+    /// The sample's accounts are the only ones without a bank link whose IDs start with "demo-".
+    public static func isSample(_ account: BankAccount) -> Bool {
+        account.link == nil && account.externalID.hasPrefix("demo-")
+    }
+
+    /// Removes the sample household: its accounts, their transactions and the budget months it planned.
+    /// Bank and imported transactions stay; any assigned to a sample month go back to the tray.
+    public static func remove(from context: ModelContext) {
+        let accounts = ((try? context.fetch(FetchDescriptor<BankAccount>())) ?? []).filter(isSample)
+        let accountIDs = Set(accounts.map(\.persistentModelID))
+        let transactions = (try? context.fetch(FetchDescriptor<LedgerTransaction>())) ?? []
+        let sample = transactions.filter { $0.account.map { accountIDs.contains($0.persistentModelID) } ?? false }
+        let sampleIDs = Set(sample.map(\.persistentModelID))
+
+        // Sample data is only offered before any month is planned, so the months created while it was seeded are its own.
+        var months: [BudgetMonth] = []
+        if let first = sample.map(\.createdAt).min(), let last = sample.map(\.createdAt).max() {
+            let seeding = first.addingTimeInterval(-1)...last.addingTimeInterval(1)
+            months = ((try? context.fetch(FetchDescriptor<BudgetMonth>())) ?? []).filter { seeding.contains($0.createdAt) }
+        }
+        let itemIDs = Set(months.flatMap { ($0.groups ?? []).flatMap { $0.items ?? [] } }.map(\.persistentModelID))
+        for transaction in transactions where !sampleIDs.contains(transaction.persistentModelID) {
+            let assignedToSample = (transaction.allocations ?? []).contains { $0.item.map { itemIDs.contains($0.persistentModelID) } ?? false }
+            if assignedToSample { Ledger.unassign(transaction, in: context) }
+        }
+        sample.forEach(context.delete)
+        accounts.forEach(context.delete)
+        months.forEach(context.delete)
+        try? context.save()
+    }
 }

@@ -7,9 +7,11 @@ struct SettingsScreen: View {
     @Environment(\.modelContext) private var context
     @Environment(\.webAuthenticationSession) private var webAuth
     @Query(sort: \BankLink.createdAt) private var banks: [BankLink]
+    @Query private var accounts: [BankAccount]
     @AppStorage("appLock") private var appLock = false
     @State private var isImporting = false
     @State private var confirmingErase = false
+    @State private var confirmingSampleRemoval = false
 
     var body: some View {
         @Bindable var bank = app.bank
@@ -51,6 +53,10 @@ struct SettingsScreen: View {
                     NavigationLink { BackupView() } label: {
                         Label("Back up and restore", systemImage: "lock.doc")
                     }
+                    if accounts.contains(where: DemoData.isSample) {
+                        Button("Remove sample data", systemImage: "trash") { confirmingSampleRemoval = true }
+                            .accessibilityIdentifier("remove-sample-data")
+                    }
                 }
 
                 Section {
@@ -89,6 +95,13 @@ struct SettingsScreen: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(bank.message ?? "")
+            }
+            .confirmationDialog("Remove sample data?", isPresented: $confirmingSampleRemoval, titleVisibility: .visible) {
+                Button("Remove sample data", role: .destructive) {
+                    withAnimation(.snappy) { DemoData.remove(from: context) }
+                }
+            } message: {
+                Text("This deletes the sample accounts, their transactions and the sample budget. Your bank connections and their transactions stay.")
             }
             .confirmationDialog("Erase everything?", isPresented: $confirmingErase, titleVisibility: .visible) {
                 Button("Erase all data", role: .destructive, action: eraseAll)

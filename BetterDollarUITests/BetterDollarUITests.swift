@@ -54,6 +54,21 @@ import XCTest
         XCTAssertTrue(element(app, "leftToBudget").label.contains("$2,499.50"), element(app, "leftToBudget").label)
     }
 
+    func testRemoveSampleData() {
+        let app = launch(["-BDDemo", "-BDTab", "settings"])
+        let remove = element(app, "remove-sample-data")
+        XCTAssertTrue(remove.waitForExistence(timeout: 8))
+        remove.tap()
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Remove sample data", "remove-sample-data")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+
+        app.tabBars.buttons["Budget"].tap()
+        XCTAssertTrue(element(app, "start-template").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "sample-data").exists, "with no months left, the sample can be explored again")
+    }
+
     func testDragTransactionOntoBudgetItem() {
         let app = launch(["-BDDemo", "-budgetColumn", "Spent"])
         let slip = element(app, "slip-City Water Utility")

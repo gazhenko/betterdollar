@@ -220,4 +220,37 @@ import Testing
         BudgetPlanner.setFund(paycheck, true, in: context)
         #expect(!paycheck.isFund)
     }
+
+    @Test func removingSampleDataKeepsBankData() throws {
+        let today = MonthKey(date: Date())
+        DemoData.seed(into: context)
+        let link = BankLink(itemID: "item-1", institutionName: "Real Bank")
+        let checking = BankAccount(externalID: "account-1", name: "Checking")
+        context.insert(link)
+        context.insert(checking)
+        checking.link = link
+        let assigned = LedgerTransaction(date: Date(), amountCents: 42_00, isIncome: false, merchant: "Corner Store", source: .plaid, externalID: "t1")
+        let waiting = LedgerTransaction(date: Date(), amountCents: 9_99, isIncome: false, merchant: "Streaming", source: .plaid, externalID: "t2")
+        for transaction in [assigned, waiting] {
+            context.insert(transaction)
+            transaction.account = checking
+        }
+        let groceries = try #require(try context.fetch(FetchDescriptor<BudgetItem>()).first { $0.name == "Groceries" && $0.group?.month?.key == today.id })
+        Ledger.assign(assigned, to: groceries, in: context)
+        // A month planned after exploring the sample is the person's own.
+        let later = BudgetPlanner.createFromTemplate(today.next, in: context)
+        later.createdAt = Date().addingTimeInterval(60)
+        try context.save()
+        #expect(DemoData.isSample(try #require(try context.fetch(FetchDescriptor<BankAccount>()).first { $0.externalID == "demo-card" })))
+
+        DemoData.remove(from: context)
+
+        #expect(try context.fetch(FetchDescriptor<BankAccount>()).map(\.name) == ["Checking"])
+        let left = try context.fetch(FetchDescriptor<LedgerTransaction>())
+        #expect(Set(left.map(\.merchant)) == ["Corner Store", "Streaming"])
+        #expect(left.allSatisfy { $0.status == .new && ($0.allocations ?? []).isEmpty && $0.account === checking })
+        #expect(try context.fetch(FetchDescriptor<BudgetMonth>()).map(\.key) == [today.next.id])
+        #expect(try context.fetch(FetchDescriptor<Allocation>()).isEmpty)
+        #expect(try context.fetchCount(FetchDescriptor<BankLink>()) == 1)
+    }
 }

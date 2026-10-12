@@ -73,6 +73,7 @@ Free provisioning expires after 7 days, so reinstall to refresh. Your data survi
 Launch arguments for development:
 - `-BDDemo`: sample data in an in-memory store.
 - `-BDEmpty`: an empty in-memory store.
+- `-BDRemoveSampleData`: remove "Explore with sample data" records from the real store at launch (same as Settings → Remove sample data).
 - `-BDTab budget|transactions|insights|coach|settings`: open on that tab.
 
 ## Layout

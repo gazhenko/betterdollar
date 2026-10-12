@@ -32,7 +32,9 @@ struct BetterDollarApp: App {
             let directory = URL.applicationSupportDirectory.appending(path: "BetterDollar", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUnlessOpen], ofItemAtPath: directory.path)
-            return try BetterDollarSchema.container(url: directory.appending(path: "BetterDollar.store"))
+            let container = try BetterDollarSchema.container(url: directory.appending(path: "BetterDollar.store"))
+            if arguments.contains("-BDRemoveSampleData") { DemoData.remove(from: container.mainContext) }
+            return container
         } catch {
             fatalError("BetterDollar couldn't open its data store: \(error)")
         }
