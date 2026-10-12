@@ -37,7 +37,7 @@ func render(background: UInt32, ink: UInt32, to url: URL) throws {
     ctx.fill(CGRect(x: 0, y: 0, width: size, height: size))
 
     // Nudged right of center: the B's bowls carry more visual weight than its stem.
-    let letter = glyphPath("B", height: 760, center: CGPoint(x: size / 2 + 8, y: size / 2))
+    let letter = glyphPath("B", height: 690, center: CGPoint(x: size / 2 + 8, y: size / 2))
     ctx.saveGState()
     ctx.addPath(letter)
     ctx.clip()
