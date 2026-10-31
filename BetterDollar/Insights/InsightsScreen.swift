@@ -10,9 +10,18 @@ nonisolated enum ChartInk {
     static let income = Ink.dynamic(light: 0xBD7F12, dark: 0xC2821C)
 }
 
+/// Insights looks ahead (cash flow) or back (where the month's money went).
+enum InsightsPage: String, CaseIterable, Identifiable {
+    case cashFlow, spending
+
+    var id: String { rawValue }
+    var title: String { self == .cashFlow ? "Cash flow" : "Spending" }
+}
+
 struct InsightsScreen: View {
     @Environment(AppModel.self) private var app
     @Query(sort: \BudgetMonth.key) private var months: [BudgetMonth]
+    @AppStorage("insightsPage") private var page: InsightsPage = .cashFlow
 
     private var month: BudgetMonth? { months.first { $0.key == app.month.id } }
 
@@ -20,20 +29,16 @@ struct InsightsScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    MonthHeader()
-                    if let month {
-                        let funds = FundLedger(months: months)
-                        let totals = BudgetMath.totals(for: month)
-                        HStack(spacing: 12) {
-                            StatTile(title: "Spent", cents: totals.spentCents, of: totals.plannedExpenseCents, noun: "planned")
-                            StatTile(title: "Received", cents: totals.receivedCents, of: totals.plannedIncomeCents, noun: "expected")
-                        }
-                        GroupSpending(month: month, funds: funds)
-                        TrendChart(months: months, current: app.month)
-                        FundProgress(month: month, funds: funds)
+                    Picker("Show", selection: $page) {
+                        ForEach(InsightsPage.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("insights-page")
+                    if page == .cashFlow {
+                        CashFlowSection()
                     } else {
-                        ContentUnavailableView("No plan for \(app.month.monthName)", systemImage: "chart.bar.xaxis",
-                                               description: Text("Insights appear once this month has a plan."))
+                        spending
                     }
                 }
                 .padding(.horizontal, 20)
@@ -42,6 +47,24 @@ struct InsightsScreen: View {
             .statusBarShield()
             .paperBackground()
             .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    @ViewBuilder private var spending: some View {
+        MonthHeader()
+        if let month {
+            let funds = FundLedger(months: months)
+            let totals = BudgetMath.totals(for: month)
+            HStack(spacing: 12) {
+                StatTile(title: "Spent", cents: totals.spentCents, of: totals.plannedExpenseCents, noun: "planned")
+                StatTile(title: "Received", cents: totals.receivedCents, of: totals.plannedIncomeCents, noun: "expected")
+            }
+            GroupSpending(month: month, funds: funds)
+            TrendChart(months: months, current: app.month)
+            FundProgress(month: month, funds: funds)
+        } else {
+            ContentUnavailableView("No plan for \(app.month.monthName)", systemImage: "chart.bar.xaxis",
+                                   description: Text("Insights appear once this month has a plan."))
         }
     }
 }

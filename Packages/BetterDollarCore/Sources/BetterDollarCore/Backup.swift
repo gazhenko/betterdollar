@@ -22,6 +22,7 @@ public struct BackupArchive: Codable, Sendable {
     public struct Account: Codable, Sendable {
         var uuid: UUID, externalID: String, name: String, officialName: String, mask: String, type: String, subtype: String
         var currentBalanceCents: Int?, availableBalanceCents: Int?, isHidden: Bool, linkItemID: String?
+        var paymentDueDay: Int?, paymentFixedCents: Int?
     }
     public struct Split: Codable, Sendable { var itemUUID: UUID, amountCents: Int }
     public struct Transaction: Codable, Sendable {
@@ -31,6 +32,10 @@ public struct BackupArchive: Codable, Sendable {
         var merchantEdited: Bool?
     }
     public struct Message: Codable, Sendable { var role: String, text: String, engine: String, createdAt: Date }
+    public struct Flow: Codable, Sendable {
+        var uuid: UUID, key: String, isIgnored: Bool, name: String, isIncome: Bool, amountCents: Int, cadence: String
+        var nextDate: Date?, coversSeriesID: UUID?, createdAt: Date
+    }
 
     public var version: Int
     public var exportedAt: Date
@@ -41,6 +46,8 @@ public struct BackupArchive: Codable, Sendable {
     public var coach: [Message]
     /// Present only when the user chose to include bank connections.
     public var plaidCredentials: PlaidCredentials?
+    /// Cash flow choices about paychecks and bills (absent in older backups).
+    public var flows: [Flow]?
 
     public var transactionCount: Int { transactions.count }
     public var monthCount: Int { months.count }
@@ -53,6 +60,7 @@ public struct BackupArchive: Codable, Sendable {
         let accounts = try context.fetch(FetchDescriptor<BankAccount>())
         let transactions = try context.fetch(FetchDescriptor<LedgerTransaction>(sortBy: [SortDescriptor(\.date)]))
         let messages = try context.fetch(FetchDescriptor<CoachMessage>(sortBy: [SortDescriptor(\.createdAt)]))
+        let flows = try context.fetch(FetchDescriptor<RecurringFlow>(sortBy: [SortDescriptor(\.createdAt)]))
         return BackupArchive(
             version: currentVersion,
             exportedAt: Date(),
@@ -75,7 +83,8 @@ public struct BackupArchive: Codable, Sendable {
             accounts: accounts.map { a in
                 Account(uuid: a.uuid, externalID: a.externalID, name: a.name, officialName: a.officialName, mask: a.mask,
                         type: a.type, subtype: a.subtype, currentBalanceCents: a.currentBalanceCents,
-                        availableBalanceCents: a.availableBalanceCents, isHidden: a.isHidden, linkItemID: a.link?.itemID)
+                        availableBalanceCents: a.availableBalanceCents, isHidden: a.isHidden, linkItemID: a.link?.itemID,
+                        paymentDueDay: a.paymentDueDay, paymentFixedCents: a.paymentFixedCents)
             },
             transactions: transactions.map { t in
                 Transaction(uuid: t.uuid, date: t.date, amountCents: t.amountCents, isIncome: t.isIncome, merchant: t.merchant,
@@ -86,7 +95,11 @@ public struct BackupArchive: Codable, Sendable {
                             merchantEdited: t.merchantEdited)
             },
             coach: messages.map { Message(role: $0.roleRaw, text: $0.text, engine: $0.engine, createdAt: $0.createdAt) },
-            plaidCredentials: includeBankConnections ? vault?.credentials : nil
+            plaidCredentials: includeBankConnections ? vault?.credentials : nil,
+            flows: flows.map { f in
+                Flow(uuid: f.uuid, key: f.key, isIgnored: f.isIgnored, name: f.name, isIncome: f.isIncome, amountCents: f.amountCents,
+                     cadence: f.cadenceRaw, nextDate: f.nextDate, coversSeriesID: f.coversSeriesID, createdAt: f.createdAt)
+            }
         )
     }
 
@@ -145,6 +158,8 @@ public struct BackupArchive: Codable, Sendable {
             account.currentBalanceCents = a.currentBalanceCents
             account.availableBalanceCents = a.availableBalanceCents
             account.isHidden = a.isHidden
+            account.paymentDueDay = a.paymentDueDay ?? 0
+            account.paymentFixedCents = a.paymentFixedCents ?? 0
             account.link = a.linkItemID.flatMap { linksByID[$0] }
             context.insert(account)
             accountsByUUID[a.uuid] = account
@@ -179,6 +194,17 @@ public struct BackupArchive: Codable, Sendable {
             message.createdAt = m.createdAt
             context.insert(message)
         }
+        for f in flows ?? [] {
+            let flow = RecurringFlow(key: f.key, name: f.name, isIncome: f.isIncome)
+            flow.uuid = f.uuid
+            flow.isIgnored = f.isIgnored
+            flow.amountCents = f.amountCents
+            flow.cadenceRaw = f.cadence
+            flow.nextDate = f.nextDate
+            flow.coversSeriesID = f.coversSeriesID
+            flow.createdAt = f.createdAt
+            context.insert(flow)
+        }
         if let plaidCredentials { vault?.save(plaidCredentials) }
         try context.save()
     }
@@ -192,6 +218,7 @@ public struct BackupArchive: Codable, Sendable {
         for account in try context.fetch(FetchDescriptor<BankAccount>()) { context.delete(account) }
         for link in try context.fetch(FetchDescriptor<BankLink>()) { context.delete(link) }
         for message in try context.fetch(FetchDescriptor<CoachMessage>()) { context.delete(message) }
+        for flow in try context.fetch(FetchDescriptor<RecurringFlow>()) { context.delete(flow) }
         try context.save()
     }
 }

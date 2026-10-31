@@ -178,6 +178,17 @@ import Testing
         #expect(all.filter { $0.status == .tracked }.allSatisfy { $0.allocatedCents == $0.amountCents })
     }
 
+    @Test func sampleTrayHoldsTheSameChargesOnAnyDay() throws {
+        for day in [2, 20, 31] {
+            let container = try BetterDollarSchema.container(inMemory: true)
+            let today = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: day, hour: 9))!
+            DemoData.seed(into: container.mainContext, today: today)
+            let tray = Ledger.transactions(in: MonthKey(year: 2026, month: 10), status: .new, context: container.mainContext)
+            #expect(Set(tray.map(\.merchant)) == ["Whole Foods Market", "Planet Fitness", "City Water Utility", "Netflix"], "on the \(day)th")
+            #expect(tray.allSatisfy { Calendar.current.startOfDay(for: $0.date) <= Calendar.current.startOfDay(for: today) })
+        }
+    }
+
     @Test func financeDataSummarizesForTheCoach() {
         let today = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 20, hour: 9))!
         DemoData.seed(into: context, today: today)

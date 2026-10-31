@@ -171,6 +171,10 @@ public enum TransactionSource: String, Codable, Sendable {
     public var currentBalanceCents: Int?
     public var availableBalanceCents: Int?
     public var isHidden: Bool = false
+    /// Credit cards: the day of the month the payment is due (0 when not set).
+    public var paymentDueDay: Int = 0
+    /// Credit cards: a set monthly payment. Zero means the full balance is paid.
+    public var paymentFixedCents: Int = 0
     public var link: BankLink?
     @Relationship(deleteRule: .nullify, inverse: \LedgerTransaction.account)
     public var transactions: [LedgerTransaction]? = []
@@ -180,7 +184,12 @@ public enum TransactionSource: String, Codable, Sendable {
         self.name = name
     }
 
-    public var displayName: String { mask.isEmpty ? name : "\(name) ••\(mask)" }
+    public var displayName: String {
+        guard !mask.isEmpty else { return name }
+        // Some banks already put the last digits in the name ("Credit Card **1234").
+        let base = name.replacingOccurrences(of: "**\(mask)", with: "").trimmingCharacters(in: .whitespaces)
+        return "\(base) ••\(mask)"
+    }
     /// Credit cards and loans report what you owe as a positive balance.
     public var isLiability: Bool { type == "credit" || type == "loan" }
 }
@@ -201,10 +210,43 @@ public enum TransactionSource: String, Codable, Sendable {
     public var isUser: Bool { roleRaw == "user" }
 }
 
+/// A choice about a paycheck or bill for cash flow: a detected one confirmed, ignored or adjusted, or one added by hand.
+@Model public final class RecurringFlow {
+    public var uuid: UUID = UUID()
+    /// The detected pattern this is about (`RecurringPattern.id`); empty for one added by hand.
+    public var key: String = ""
+    public var isIgnored: Bool = false
+    public var name: String = ""
+    public var isIncome: Bool = false
+    /// Replaces the detected amount when above zero.
+    public var amountCents: Int = 0
+    public var cadenceRaw: String = Cadence.monthly.rawValue
+    /// For ones added by hand: the next date it happens.
+    public var nextDate: Date?
+    /// The budget item series it pays, so that item isn't counted twice.
+    public var coversSeriesID: UUID?
+    public var createdAt: Date = Date()
+
+    public init(key: String = "", name: String = "", isIncome: Bool = false) {
+        self.key = key
+        self.name = name
+        self.isIncome = isIncome
+    }
+
+    /// Stored in `coversSeriesID` when the person says a bill isn't in their budget, overriding what history suggests.
+    public static let notInBudget = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
+    public var isManual: Bool { key.isEmpty }
+    public var cadence: Cadence {
+        get { Cadence(rawValue: cadenceRaw) ?? .monthly }
+        set { cadenceRaw = newValue.rawValue }
+    }
+}
+
 public enum BetterDollarSchema {
     public static let models: [any PersistentModel.Type] = [
         BudgetMonth.self, BudgetGroup.self, BudgetItem.self, LedgerTransaction.self,
-        Allocation.self, BankLink.self, BankAccount.self, CoachMessage.self
+        Allocation.self, BankLink.self, BankAccount.self, CoachMessage.self, RecurringFlow.self
     ]
 
     @MainActor public static func container(inMemory: Bool = false, url: URL? = nil) throws -> ModelContainer {

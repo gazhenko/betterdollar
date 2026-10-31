@@ -4,6 +4,7 @@ A free, open-source zero-based budgeting app for iPhone. It works like EveryDoll
 
 - **Plan every dollar.** Each month gets its own plan. You list your income, then give every dollar a job across groups like Housing, Food and Savings until "left to budget" reaches $0.00. The engraved plate at the top fills in as you go.
 - **Assign transactions yourself.** New transactions wait in a tray at the bottom of the budget. Drag one onto a budget item, or tap it to pick an item or split it across several. A "Last time" hint suggests where that merchant went before, but nothing is ever assigned automatically. Transactions sit in New, Tracked or Deleted, and deleted ones can be restored.
+- **See your cash flow ahead.** Insights walks your checking balance forward 60 days. Paychecks and repeating bills come from your checking history, budget items with a due day land on that day, and a credit card is paid on the date you set. If checking would dip below zero (or a line you choose), it says when, and it suggests concrete fixes: move a bill to payday, split a big card payment, or move money from savings. Summary shows the low point and what to do about it; Runway draws the balance as a line with a list of what's coming; Calendar shows where checking ends each day.
 - **Funds roll over.** Mark an item as a fund (sinking fund or savings goal) and its balance carries from month to month. Add a goal and a target date, and BetterDollar tells you how much to plan each month.
 - **Bring your own Plaid.** Connect banks with your own free Plaid account. The app calls Plaid directly from your iPhone, so there is no BetterDollar server. You can also import CSV exports or enter transactions by hand.
 - **An on-device coach.** Ask about your budget, your funds or where the money went. Answers come from Apple Intelligence or an open model you download (Qwen 3.5, Gemma 4, Llama 3.2, LFM2.5), running on the iPhone. Your numbers never go to a cloud AI.
@@ -73,6 +74,7 @@ Free provisioning expires after 7 days, so reinstall to refresh. Your data survi
 Launch arguments for development:
 - `-BDDemo`: sample data in an in-memory store.
 - `-BDEmpty`: an empty in-memory store.
+- `-cashFlowCushion 50000`: warn when checking would end a day below $500 (also set in Paychecks and bills).
 - `-BDRemoveSampleData`: remove "Explore with sample data" records from the real store at launch (same as Settings → Remove sample data).
 - `-BDTab budget|transactions|insights|coach|settings`: open on that tab.
 

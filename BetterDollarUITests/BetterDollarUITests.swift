@@ -78,7 +78,7 @@ import XCTest
         reveal(water, above: element(app, "tray-toggle").frame.minY, in: app)
         slip.press(forDuration: 1.2, thenDragTo: water)
         XCTAssertTrue(waitForLabel(element(app, "tray-toggle"), "3 new transactions"), trayTitle(app))
-        XCTAssertFalse(element(app, "slip-City Water Utility").exists)
+        XCTAssertTrue(element(app, "slip-City Water Utility").waitForNonExistence(timeout: 3))
     }
 
     func testTapToAssignWithSuggestion() {
@@ -123,9 +123,11 @@ import XCTest
         app.navigationBars.buttons["Save"].tap()
 
         app.tabBars.buttons["Transactions"].tap()
-        app.buttons["Tracked (82)"].firstMatch.tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Split: Groceries, Restaurants")).firstMatch
-            .waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Tracked (")).firstMatch.tap()
+        // Newest first, so later sample charges this month can push it down the list.
+        let split = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Split: Groceries, Restaurants")).firstMatch
+        for _ in 0..<8 where !split.waitForExistence(timeout: 1) { app.swipeUp() }
+        XCTAssertTrue(split.exists)
     }
 
     func testAddManualTransactionLandsInTray() {
@@ -159,6 +161,61 @@ import XCTest
     }
 
     /// Captures the screens the journeys don't visit, for design review.
+    /// The three cash flow tabs with a warning line high enough that the sample household dips below it, then the review sheet.
+    func testCashFlowTabsAndReview() {
+        // Tabs are picked by tapping: a launch argument would pin the stored setting for the whole run.
+        let app = launch(["-BDDemo", "-BDTab", "insights", "-cashFlowCushion", "500000"])
+        func snap(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        element(app, "insights-page").buttons["Cash flow"].tap()
+        element(app, "cash-flow-tab").buttons["Summary"].tap()
+        XCTAssertTrue(element(app, "cash-flow-plate").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "cash-flow-plate").label.contains("drops below $5,000"), element(app, "cash-flow-plate").label)
+        XCTAssertFalse(element(app, "runway-chart").exists)
+        snap("cashflow-summary-1")
+        app.swipeUp()
+        XCTAssertTrue(element(app, "cash-flow-suggestions").exists)
+        snap("cashflow-summary-2")
+
+        app.swipeDown(); app.swipeDown()
+        element(app, "cash-flow-tab").buttons["Runway"].tap()
+        XCTAssertTrue(element(app, "runway-chart").waitForExistence(timeout: 5))
+        XCTAssertFalse(element(app, "cash-flow-plate").exists)
+        snap("cashflow-runway-1")
+        app.swipeUp()
+        snap("cashflow-runway-2")
+
+        app.swipeDown(); app.swipeDown()
+        element(app, "cash-flow-tab").buttons["Calendar"].tap()
+        XCTAssertTrue(element(app, "cash-flow-calendar").waitForExistence(timeout: 5))
+        snap("cashflow-calendar-1")
+        app.swipeUp()
+        snap("cashflow-calendar-2")
+
+        app.swipeDown(); app.swipeDown(); app.swipeDown()
+        element(app, "cash-flow-tab").buttons["Summary"].tap()
+        XCTAssertTrue(element(app, "review-found").waitForExistence(timeout: 5))
+        element(app, "cash-flow-review").tap()
+        XCTAssertTrue(app.navigationBars["Paychecks and bills"].waitForExistence(timeout: 5))
+        snap("cashflow-review")
+        let rent = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Oak Street Apartments")).firstMatch
+        XCTAssertTrue(rent.waitForExistence(timeout: 5))
+        rent.tap()
+        let toggle = app.switches["Count in the forecast"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        snap("cashflow-bill-detail")
+        toggle.switches.firstMatch.tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Turned off")).firstMatch.waitForExistence(timeout: 5))
+        app.navigationBars["Paychecks and bills"].buttons["Done"].tap()
+        XCTAssertTrue(element(app, "cash-flow-plate").waitForExistence(timeout: 5))
+        XCTAssertFalse(element(app, "review-found").exists, "reviewing clears the prompt")
+    }
+
     func testScreenTour() {
         let app = launch(["-BDDemo", "-budgetColumn", "Remaining"])
         func snap(_ name: String) {

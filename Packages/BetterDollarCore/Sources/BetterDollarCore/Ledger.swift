@@ -117,7 +117,7 @@ public enum LedgerError: LocalizedError, Equatable {
     // MARK: - Suggestions
 
     /// Lowercased merchant without store numbers, so "SHELL OIL 12345" and "Shell Oil 778" match.
-    public static func normalizedMerchant(_ merchant: String) -> String {
+    nonisolated public static func normalizedMerchant(_ merchant: String) -> String {
         merchant.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty && !$0.allSatisfy(\.isNumber) && $0 != "pos" && $0 != "debit" && $0 != "purchase" }

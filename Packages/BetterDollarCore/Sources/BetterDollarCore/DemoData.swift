@@ -57,6 +57,11 @@ import SwiftData
         (29, "Amazon", 38_14, false, [("Gifts", 38_14)], 1)
     ]
 
+    /// Fresh bank activity in the current month, left unassigned: the first charge from each of these merchants.
+    private static let trayRows: Set<Int> = Set(["Whole Foods Market", "Planet Fitness", "City Water Utility", "Netflix"].compactMap { name in
+        pattern.firstIndex { $0.1 == name }
+    })
+
     public static func seed(into context: ModelContext, today: Date = Date(), calendar: Calendar = .current) {
         let checking = BankAccount(externalID: "demo-checking", name: "Everyday Checking")
         checking.mask = "4821"; checking.type = "depository"; checking.subtype = "checking"
@@ -64,6 +69,7 @@ import SwiftData
         let card = BankAccount(externalID: "demo-card", name: "Rewards Card")
         card.mask = "9014"; card.type = "credit"; card.subtype = "credit card"
         card.currentBalanceCents = 612_48; card.availableBalanceCents = 7_387_52
+        card.paymentDueDay = 25
         context.insert(checking)
         context.insert(card)
         let accounts = [checking, card]
@@ -101,9 +107,11 @@ import SwiftData
             }
 
             let daysInMonth = calendar.range(of: .day, in: .month, for: key.firstDay(calendar: calendar))?.count ?? 28
-            let visible = pattern.filter { offset > 0 || $0.0 <= todayDay }
-            for (index, row) in visible.enumerated() {
-                let day = min(row.0, daysInMonth)
+            // This month shows what has happened so far, plus the same few charges waiting in the tray on any date.
+            let visible = pattern.enumerated().filter { offset > 0 || $0.element.0 <= todayDay || trayRows.contains($0.offset) }
+            for (index, row) in visible.map({ ($0.offset, $0.element) }) {
+                let isTray = offset == 0 && trayRows.contains(index)
+                let day = min(row.0, daysInMonth, isTray ? todayDay : .max)
                 // Vary amounts a little from month to month so history looks real.
                 let wobble = row.3 || row.4.count > 1 || row.2 >= 300_00 ? 0 : ((index * 37 + offset * 53) % 11 - 5) * row.2 / 100
                 let cents = row.2 + wobble
@@ -111,8 +119,7 @@ import SwiftData
                 let transaction = LedgerTransaction(date: date, amountCents: cents, isIncome: row.3, merchant: row.1, source: .manual)
                 transaction.account = accounts[row.5]
                 context.insert(transaction)
-                // The latest few in the current month wait in the tray, like fresh bank activity.
-                if offset == 0 && index >= visible.count - 4 { continue }
+                if isTray { continue }
                 if row.4.count == 1, let item = items[row.4[0].0] {
                     Ledger.assign(transaction, to: item, in: context)
                 } else {
