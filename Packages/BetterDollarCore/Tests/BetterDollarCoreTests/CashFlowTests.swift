@@ -473,6 +473,7 @@ import Testing
         // Paid once a month, but the latest one early.
         for date in [day(7, 7), day(8, 8), day(9, 16), day(10, 2)] { _ = add(date, 1_500_00, "Summit Mortgage", on: checking) }
         Ledger.assign(add(day(10, 20), 55_00, "Corner Grocer", on: card), to: groceries, in: context)
+        Ledger.assign(add(day(10, 12), 98_00, "Lakeside Power", on: checking), to: lines["Electric"]!, in: context)
         try context.save()
 
         let snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar)
@@ -481,11 +482,48 @@ import Testing
         // Named in the bill, and the closest amount within 10% (Electric is close too, but not as close).
         #expect(links["Riverside Water Authority"] == lines["Water"]?.seriesID)
         #expect(links["Bright Path Learning"] == lines["Tutoring"]?.seriesID)
-        // Groceries were charged to the card, so they build up there; only Electric leaves checking day by day.
-        #expect(snapshot.cards.first?.chargedItemNames == ["Groceries"])
+        // Groceries were charged to the card, so they build up there; Electric was paid from checking and stays there.
+        #expect(snapshot.cards.first?.chargedItemNames == ["Groceries"] && snapshot.cards.first?.assumedItemNames == [])
         #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 410_00 / 30 + 1)
         #expect(snapshot.cards.first?.payments.map(\.amountCents) == [-55_00, -(600_00 / 31 + 25 * 20_00)])
         #expect(snapshot.missingIncome == [CashFlowPlanner.MissingIncome(name: "Side work", cents: 400_00)])
+    }
+
+    @Test func linesWithNoChargesGoWhereMostSpendingGoes() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 2_000_00
+        let card = BankAccount(externalID: "card", name: "Card")
+        card.type = "credit"; card.currentBalanceCents = 0; card.paymentDueDay = 20
+        context.insert(checking)
+        context.insert(card)
+        let month = BudgetPlanner.createBlank(MonthKey(date: today, calendar: calendar), in: context)
+        let group = BudgetPlanner.addGroup(named: "Everyday", to: month, in: context)
+        var lines: [String: BudgetItem] = [:]
+        for (name, cents) in [("Groceries", 300_00), ("Dining", 150_00), ("Power", 200_00), ("Gifts", 90_00)] {
+            let item = BudgetPlanner.addItem(named: name, to: group, in: context)
+            item.plannedCents = cents
+            lines[name] = item
+        }
+        func charge(_ cents: Int, _ merchant: String, on account: BankAccount, to name: String) {
+            let transaction = LedgerTransaction(date: calendar.date(byAdding: .hour, value: 12, to: day(10, 15))!, amountCents: cents,
+                                                isIncome: false, merchant: merchant, source: .plaid)
+            context.insert(transaction)
+            transaction.account = account
+            Ledger.assign(transaction, to: lines[name]!, in: context)
+        }
+        charge(40_00, "Corner Grocer", on: card, to: "Groceries")
+        charge(22_00, "Noodle Bar", on: card, to: "Dining")
+        charge(61_00, "Lakeside Power", on: checking, to: "Power")
+        try context.save()
+
+        // Two of the three charged lines went on the card, so Gifts is counted there too; Power stays in checking.
+        let snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar)
+        #expect(snapshot.cards.first?.chargedItemNames == ["Dining", "Groceries"])
+        #expect(snapshot.cards.first?.assumedItemNames == ["Gifts"])
+        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 200_00 / 30 + 1)
     }
 
     @Test func sampleHouseholdShowsItsPaydaysAndCard() throws {

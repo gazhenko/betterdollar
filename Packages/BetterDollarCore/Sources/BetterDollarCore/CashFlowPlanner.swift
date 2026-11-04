@@ -20,6 +20,8 @@ import SwiftData
         public var coversSeriesID: UUID?
         /// Budget items whose spending has mostly been charged to this card, so it's counted on the card.
         public var chargedItemNames: [String] = []
+        /// Budget items nothing has been charged to yet, counted here because most everyday items are charged to this card.
+        public var assumedItemNames: [String] = []
         public var estimatedMinimumCents: Int
         /// Its payments in the forecast.
         public var payments: [CashFlowEvent]
@@ -167,9 +169,11 @@ import SwiftData
             cardInfo[index].coversSeriesID = named[0].seriesID
         }
 
-        // Spending is counted on a card, not from checking day by day, for the budget groups chosen for it and for
-        // items mostly charged to it before. A card paid from another account takes that spending out of the
-        // forecast; one without a payment day leaves it in checking.
+        // Spending is counted on a card, not from checking day by day, for the budget groups chosen for it, for
+        // items mostly charged to it before and, when most everyday items are charged to it, for items nothing has
+        // been charged to yet. A card paid from another account takes that spending out of the forecast; one without
+        // a payment day leaves it in checking.
+        let covered = Set(schedules.compactMap(\.coversSeriesID) + cardInfo.filter { paid.contains("card:\($0.id)") }.compactMap(\.coversSeriesID))
         var spentOn: [String: String] = [:]
         let counted = cards.filter { paid.contains("card:\($0.uuid)") || $0.paymentMode == .elsewhere }
         for card in counted {
@@ -185,14 +189,24 @@ import SwiftData
                 chargedTo[seriesID, default: [:]][account.persistentModelID, default: 0] += allocation.amountCents
             }
         }
-        let itemCards: [UUID: String] = chargedTo.compactMapValues { accounts in
-            accounts.max { $0.value < $1.value }.flatMap { countedIDs.contains($0.key) ? poolOfCard[$0.key] : nil }
+        let homes = chargedTo.compactMapValues { accounts in accounts.max { $0.value < $1.value }?.key }
+        var itemCards = homes.compactMapValues { countedIDs.contains($0) ? poolOfCard[$0] : nil }
+        let everydayItems = currentPlanItems(in: context, current: current).filter { !$0.isFund && $0.dueDay == 0 && !covered.contains($0.seriesID) }
+        let homeCounts = Dictionary(grouping: everydayItems.compactMap { homes[$0.seriesID] }) { $0 }.mapValues(\.count)
+        var assumed: Set<UUID> = []
+        if let top = homeCounts.max(by: { $0.value < $1.value }), top.value * 2 > homeCounts.values.reduce(0, +),
+           countedIDs.contains(top.key), let pool = poolOfCard[top.key] {
+            for item in everydayItems where homes[item.seriesID] == nil {
+                itemCards[item.seriesID] = pool
+                assumed.insert(item.seriesID)
+            }
         }
         let groupCards = Set(spentOn.values).union(itemCards.values)
         let planNames = Dictionary(currentPlanItems(in: context, current: current).map { ($0.seriesID, $0.name) }, uniquingKeysWith: { first, _ in first })
         for index in cardInfo.indices {
-            let key = "card:\(cardInfo[index].id)"
-            cardInfo[index].chargedItemNames = itemCards.filter { $0.value == key }.compactMap { planNames[$0.key] }.sorted()
+            let mine = itemCards.filter { $0.value == "card:\(cardInfo[index].id)" }
+            cardInfo[index].chargedItemNames = mine.keys.filter { !assumed.contains($0) }.compactMap { planNames[$0] }.sorted()
+            cardInfo[index].assumedItemNames = mine.keys.filter { assumed.contains($0) }.compactMap { planNames[$0] }.sorted()
         }
 
         // Spending this month that hasn't been assigned yet still uses up everyday budget, on the card it was charged to.
@@ -210,7 +224,6 @@ import SwiftData
             unassignedCents[pool, default: 0] += unassigned(history)
         }
 
-        let covered = Set(schedules.compactMap(\.coversSeriesID) + cardInfo.filter { paid.contains("card:\($0.id)") }.compactMap(\.coversSeriesID))
         let (bills, spending) = budget(in: context, today: today, end: end, current: current, covered: covered, spentOn: spentOn,
                                        itemCards: itemCards, unassignedCents: unassignedCents, calendar: calendar)
         let everyday = spending[""] ?? []

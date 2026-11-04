@@ -337,6 +337,9 @@ private struct CardPaymentDetail: View {
         if let names = info?.chargedItemNames, !names.isEmpty {
             text += " \(names.formatted(.list(type: .and))) already count here, since that's where you've charged them."
         }
+        if let names = info?.assumedItemNames, !names.isEmpty {
+            text += " \(names.formatted(.list(type: .and))) count here too until you charge them somewhere, since most of your everyday spending goes on this card."
+        }
         return text
     }
 
