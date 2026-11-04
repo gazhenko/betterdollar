@@ -23,6 +23,7 @@ public struct BackupArchive: Codable, Sendable {
         var uuid: UUID, externalID: String, name: String, officialName: String, mask: String, type: String, subtype: String
         var currentBalanceCents: Int?, availableBalanceCents: Int?, isHidden: Bool, linkItemID: String?
         var paymentDueDay: Int?, paymentFixedCents: Int?
+        var paymentMode: String?, statementCloseDay: Int?, paymentSplitsWithPay: Bool?, paymentCoversSeriesID: UUID?, cardGroupNames: String?
     }
     public struct Split: Codable, Sendable { var itemUUID: UUID, amountCents: Int }
     public struct Transaction: Codable, Sendable {
@@ -84,7 +85,9 @@ public struct BackupArchive: Codable, Sendable {
                 Account(uuid: a.uuid, externalID: a.externalID, name: a.name, officialName: a.officialName, mask: a.mask,
                         type: a.type, subtype: a.subtype, currentBalanceCents: a.currentBalanceCents,
                         availableBalanceCents: a.availableBalanceCents, isHidden: a.isHidden, linkItemID: a.link?.itemID,
-                        paymentDueDay: a.paymentDueDay, paymentFixedCents: a.paymentFixedCents)
+                        paymentDueDay: a.paymentDueDay, paymentFixedCents: a.paymentFixedCents,
+                        paymentMode: a.paymentModeRaw, statementCloseDay: a.statementCloseDay, paymentSplitsWithPay: a.paymentSplitsWithPay,
+                        paymentCoversSeriesID: a.paymentCoversSeriesID, cardGroupNames: a.cardGroupNamesRaw)
             },
             transactions: transactions.map { t in
                 Transaction(uuid: t.uuid, date: t.date, amountCents: t.amountCents, isIncome: t.isIncome, merchant: t.merchant,
@@ -160,6 +163,11 @@ public struct BackupArchive: Codable, Sendable {
             account.isHidden = a.isHidden
             account.paymentDueDay = a.paymentDueDay ?? 0
             account.paymentFixedCents = a.paymentFixedCents ?? 0
+            account.paymentModeRaw = a.paymentMode ?? ""
+            account.statementCloseDay = a.statementCloseDay ?? 0
+            account.paymentSplitsWithPay = a.paymentSplitsWithPay ?? false
+            account.paymentCoversSeriesID = a.paymentCoversSeriesID
+            account.cardGroupNamesRaw = a.cardGroupNames ?? ""
             account.link = a.linkItemID.flatMap { linksByID[$0] }
             context.insert(account)
             accountsByUUID[a.uuid] = account

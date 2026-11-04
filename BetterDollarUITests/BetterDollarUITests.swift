@@ -37,6 +37,15 @@ import XCTest
         XCTFail("Couldn't scroll \(target) into view")
     }
 
+    /// Scrolls the tray sideways until the slip is on screen; its place depends on the day's charges.
+    private func revealSlip(_ slip: XCUIElement, in app: XCUIApplication) {
+        let screenWidth = app.windows.firstMatch.frame.maxX
+        for _ in 0..<4 where slip.frame.maxX > screenWidth {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: screenWidth * 0.8, dy: slip.frame.midY))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -220, dy: 0)))
+        }
+    }
+
     func testPlanFirstMonthFromTemplate() {
         let app = launch(["-BDEmpty", "-budgetColumn", "Planned"])
         element(app, "start-template").tap()
@@ -76,6 +85,7 @@ import XCTest
         XCTAssertEqual(trayTitle(app), "4 new transactions")
         let water = element(app, "item-Water")
         reveal(water, above: element(app, "tray-toggle").frame.minY, in: app)
+        revealSlip(slip, in: app)
         slip.press(forDuration: 1.2, thenDragTo: water)
         XCTAssertTrue(waitForLabel(element(app, "tray-toggle"), "3 new transactions"), trayTitle(app))
         XCTAssertTrue(element(app, "slip-City Water Utility").waitForNonExistence(timeout: 3))
@@ -85,6 +95,7 @@ import XCTest
         let app = launch(["-BDDemo"])
         let slip = element(app, "slip-Netflix")
         XCTAssertTrue(slip.waitForExistence(timeout: 10))
+        revealSlip(slip, in: app)
         slip.tap()
         // Netflix went to Subscriptions last month, so it is suggested first.
         XCTAssertTrue(app.staticTexts["Last time"].waitForExistence(timeout: 5) || app.otherElements["Last time"].exists)
@@ -96,11 +107,7 @@ import XCTest
         let app = launch(["-BDDemo"])
         let slip = element(app, "slip-Whole Foods Market")
         XCTAssertTrue(slip.waitForExistence(timeout: 10))
-        let screenWidth = app.windows.firstMatch.frame.maxX
-        for _ in 0..<4 where slip.frame.maxX > screenWidth {
-            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: screenWidth * 0.8, dy: slip.frame.midY))
-            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -220, dy: 0)))
-        }
+        revealSlip(slip, in: app)
         slip.tap()
         element(app, "split").tap()
 
@@ -202,7 +209,9 @@ import XCTest
         element(app, "cash-flow-review").tap()
         XCTAssertTrue(app.navigationBars["Paychecks and bills"].waitForExistence(timeout: 5))
         snap("cashflow-review")
+        // Bills are in date order, so where rent sits depends on today's date.
         let rent = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Oak Street Apartments")).firstMatch
+        for _ in 0..<4 where !(rent.exists && rent.isHittable) { app.swipeUp() }
         XCTAssertTrue(rent.waitForExistence(timeout: 5))
         rent.tap()
         let toggle = app.switches["Count in the forecast"]
@@ -211,6 +220,28 @@ import XCTest
         toggle.switches.firstMatch.tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Turned off")).firstMatch.waitForExistence(timeout: 5))
+
+        // A card: how it's paid, and what that puts in the forecast.
+        let card = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Rewards Card")).firstMatch
+        for _ in 0..<4 where !(card.exists && card.isHittable) { app.swipeUp() }
+        card.tap()
+        XCTAssertTrue(element(app, "card-pay-mode").waitForExistence(timeout: 5))
+        snap("cashflow-card")
+        // Food is paid with the card, so it leaves checking with the card payment.
+        let food = app.switches["Food"]
+        for _ in 0..<4 where !(food.exists && food.isHittable) { app.swipeUp() }
+        food.switches.firstMatch.tap()
+        let includes = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "of budget spending")).firstMatch
+        for _ in 0..<3 where !includes.waitForExistence(timeout: 1) { app.swipeUp() }
+        XCTAssertTrue(includes.exists)
+        snap("cashflow-card-groups")
+        app.swipeDown(); app.swipeDown(); app.swipeDown()
+        element(app, "card-pay-mode").tap()
+        app.buttons["Minimum payment"].tap()
+        XCTAssertTrue(app.staticTexts["Minimum due"].waitForExistence(timeout: 5))
+        snap("cashflow-card-minimum")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Minimum payment")).firstMatch.waitForExistence(timeout: 5))
         app.navigationBars["Paychecks and bills"].buttons["Done"].tap()
         XCTAssertTrue(element(app, "cash-flow-plate").waitForExistence(timeout: 5))
         XCTAssertFalse(element(app, "review-found").exists, "reviewing clears the prompt")

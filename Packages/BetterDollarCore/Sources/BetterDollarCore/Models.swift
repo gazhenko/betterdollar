@@ -173,8 +173,18 @@ public enum TransactionSource: String, Codable, Sendable {
     public var isHidden: Bool = false
     /// Credit cards: the day of the month the payment is due (0 when not set).
     public var paymentDueDay: Int = 0
-    /// Credit cards: a set monthly payment. Zero means the full balance is paid.
+    /// Credit cards: the set monthly payment, or the minimum from the statement.
     public var paymentFixedCents: Int = 0
+    /// Credit cards: a `CardPaymentMode`. Empty for cards set up before there was a choice.
+    public var paymentModeRaw: String = ""
+    /// Credit cards: the day of the month the statement closes (0 when not set).
+    public var statementCloseDay: Int = 0
+    /// Credit cards: pay in parts on the paydays before each due date.
+    public var paymentSplitsWithPay: Bool = false
+    /// Credit cards: the budget item series the payments pay for, `RecurringFlow.notInBudget` for none, nil when not chosen.
+    public var paymentCoversSeriesID: UUID?
+    /// Credit cards: names of the budget groups paid with this card, one per line. Names carry across months.
+    public var cardGroupNamesRaw: String = ""
     public var link: BankLink?
     @Relationship(deleteRule: .nullify, inverse: \LedgerTransaction.account)
     public var transactions: [LedgerTransaction]? = []
@@ -192,6 +202,19 @@ public enum TransactionSource: String, Codable, Sendable {
     }
     /// Credit cards and loans report what you owe as a positive balance.
     public var isLiability: Bool { type == "credit" || type == "loan" }
+
+    /// Credit cards: how the payment is worked out. Before there was a choice, an amount meant a set payment
+    /// and no amount meant paying the statement.
+    public var paymentMode: CardPaymentMode {
+        get { CardPaymentMode(rawValue: paymentModeRaw) ?? (paymentFixedCents > 0 ? .fixed : .statement) }
+        set { paymentModeRaw = newValue.rawValue }
+    }
+
+    /// Credit cards: the budget groups whose spending goes on this card.
+    public var cardGroupNames: Set<String> {
+        get { Set(cardGroupNamesRaw.split(separator: "\n").map(String.init)) }
+        set { cardGroupNamesRaw = newValue.sorted().joined(separator: "\n") }
+    }
 }
 
 /// One turn in the coach conversation, kept on this iPhone only.

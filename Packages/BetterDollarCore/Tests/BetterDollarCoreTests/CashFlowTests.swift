@@ -138,12 +138,89 @@ import Testing
                 CashFlowSchedule(id: "pay", name: "Paycheck", isIncome: true, amountCents: 2_600_00, cadence: .biweekly, nextDate: day(11, 12)),
                 CashFlowSchedule(id: "mortgage", name: "Mortgage", isIncome: false, amountCents: 1_900_00, cadence: .monthly, nextDate: day(11, 8), monthDays: [8])
             ],
-            cards: [CardPayment(id: "card", name: "Card", dueDay: 15, amountCents: 7_200_00, repeats: false)])
+            cards: [CardPayment(id: "card", name: "Card", dueDay: 15, owedCents: 7_200_00, plan: .balance)])
         let forecast = CashFlowForecast.make(inputs, calendar: calendar)
         let plan = try! #require(forecast.suggestions.first { $0.kind == .splitPayment })
         // As much as checking can spare on the due date and each payday, without bouncing the mortgage.
         #expect(plan.title == "Pay Card in 4 parts")
         #expect(plan.detail.hasPrefix("$3,500 on Nov 15, $700 on Nov 26, $2,600 on Dec 10, and $400 on Dec 24."))
+    }
+
+    @Test func cardPlansPayWhatIsOwedToday() {
+        let today = day(10, 31)
+        func payments(_ plan: CardPayment.Plan) -> [Int] {
+            CardPayment(id: "card", name: "Card", dueDay: 20, owedCents: 1_000_00, plan: plan)
+                .payments(from: today, through: day(12, 29), calendar: calendar).map(\.cents)
+        }
+        #expect(payments(.balance) == [1_000_00])
+        // The statement now, the charges since it closed next month; later spending is everyday spending.
+        #expect(payments(.statement(remainingCents: 600_00)) == [600_00, 400_00])
+        #expect(payments(.statement(remainingCents: 0)) == [1_000_00])
+        #expect(payments(.monthly(300_00)) == [300_00, 300_00])
+        #expect(payments(.monthly(800_00)) == [800_00, 200_00])
+
+        // Paid in parts with each paycheck since the last due date.
+        let inputs = CashFlowInputs(
+            today: today, horizonDays: 60, startingCents: 3_000_00,
+            schedules: [CashFlowSchedule(id: "pay", name: "Paycheck", isIncome: true, amountCents: 1_500_00, cadence: .biweekly, nextDate: day(11, 6))],
+            cards: [CardPayment(id: "card", name: "Card", dueDay: 20, owedCents: 1_000_00, plan: .statement(remainingCents: 601_00), splitsWithPay: true)])
+        let card = CashFlowForecast.make(inputs, calendar: calendar).events.filter { $0.kind == .card }
+        #expect(card.map(\.date) == [day(11, 6), day(11, 20), day(12, 4), day(12, 18)])
+        #expect(card.map(\.amountCents) == [-300_50, -300_50, -199_50, -199_50])
+        #expect(card.first?.detail == "Part 1 of 2, due Nov 20")
+    }
+
+    @Test func budgetSpendingOnACardIsPaidWithIt() {
+        let today = day(10, 31)
+        // $100 a day of budget spending charged in November; statements close 25 days before the 20th.
+        let november = [EverydaySpending(start: day(11, 1), end: day(11, 30), amountCents: 3_000_00)]
+        func payments(_ plan: CardPayment.Plan) -> [CardPayment.Payment] {
+            CardPayment(id: "card", name: "Card", dueDay: 20, owedCents: 1_000_00, plan: plan, spending: november)
+                .payments(from: today, through: day(12, 29), calendar: calendar)
+        }
+        // Nov 20 pays the statement that closed Oct 26; Dec 20 the rest owed now plus Nov 1–25.
+        #expect(payments(.statement(remainingCents: 600_00)).map(\.cents) == [600_00, 2_900_00])
+        #expect(payments(.statement(remainingCents: 600_00)).map(\.spendingCents) == [0, 2_500_00])
+        #expect(payments(.balance).map(\.cents) == [3_000_00, 1_000_00])
+        // A set amount keeps going while anything is owed.
+        #expect(payments(.monthly(1_000_00)).map(\.cents) == [1_000_00, 1_000_00])
+
+        let inputs = CashFlowInputs(today: today, horizonDays: 60, startingCents: 5_000_00,
+                                    cards: [CardPayment(id: "card", name: "Card", dueDay: 20, owedCents: 1_000_00,
+                                                        plan: .statement(remainingCents: 600_00), spending: november)])
+        let forecast = CashFlowForecast.make(inputs, calendar: calendar)
+        #expect(forecast.days.allSatisfy { $0.everydayCents == 0 }, "card spending doesn't leave checking day by day")
+        #expect(forecast.events.last?.detail == "Includes about $2,500 of budget spending")
+    }
+
+    @Test func cardHabitsAndStatementsComeFromHistory() {
+        let cash = [entry(day(8, 16), 500_00, "Card payment"), entry(day(9, 15), 640_00, "Card payment"),
+                    entry(day(9, 18), 100_00, "Card payment"), entry(day(10, 16), 720_00, "Card payment"),
+                    entry(day(10, 16), 85_00, "Corner Grocer")]
+        var card = [entry(day(8, 17), 500_00, income: true, "Payment", category: "LOAN_PAYMENTS"),
+                    entry(day(9, 17), 640_00, income: true, "Payment", category: "LOAN_PAYMENTS"),
+                    entry(day(9, 18), 100_00, income: true, "Payment", category: "LOAN_PAYMENTS"),
+                    entry(day(10, 17), 720_00, income: true, "Payment", category: "LOAN_PAYMENTS"),
+                    entry(day(10, 2), 85_00, income: true, "Refund")]
+        let paid = RecurringDetector.payments(to: card, from: cash)
+        #expect(paid.count == 4)
+        // Whole months only (August, September, October), counted high.
+        #expect(RecurringDetector.cardHabit(paid, today: day(11, 1), calendar: calendar) == CardHabit(day: 16, monthlyCents: 720_00))
+        #expect(RecurringDetector.cardHabit(paid, today: day(1, 20, 2027), calendar: calendar) == nil)
+        #expect(RecurringDetector.cardHabit(Array(paid.prefix(1)), today: day(9, 1), calendar: calendar) == nil)
+
+        // The statement due Nov 16 closed about Oct 22. Charges after that, less refunds, wait for the next one.
+        card += [entry(day(10, 25), 150_00, "Hardware Barn"), entry(day(10, 30), 50_00, "Lantern Books"),
+                 entry(day(10, 28), 20_00, income: true, "Return"), entry(day(10, 26), 300_00, income: true, "Payment", category: "LOAN_PAYMENTS")]
+        func remaining(_ today: Date, closeDay: Int = 0) -> Int {
+            CardPayment.statementRemaining(owedCents: 900_00, cardHistory: card, dueDay: 16, closeDay: closeDay, today: today, calendar: calendar)
+        }
+        #expect(remaining(day(11, 1)) == 720_00)
+        #expect(remaining(day(10, 20)) == 900_00)
+        #expect(remaining(day(11, 1), closeDay: 26) == 870_00)
+        #expect(CardPayment.statementClose(before: day(11, 16), closeDay: 5, calendar: calendar) == day(10, 5))
+        #expect(CardPayment.statementClose(before: day(11, 16), closeDay: 30, calendar: calendar) == day(9, 30))
+        #expect([7_204_50, 500_00, 30_00].map(CardPayment.estimatedMinimum) == [217_00, 40_00, 30_00])
     }
 
     // MARK: From the store
@@ -216,6 +293,201 @@ import Testing
         #expect(snapshot.unreviewedCount == 0 && snapshot.cardsWithoutDueDay.isEmpty)
     }
 
+    @Test func cardsArePaidOnTheirUsualDayUntilSet() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 3_000_00
+        let card = BankAccount(externalID: "card", name: "Card")
+        card.type = "credit"; card.subtype = "credit card"; card.currentBalanceCents = 800_00
+        context.insert(checking)
+        context.insert(card)
+        func add(_ date: Date, _ cents: Int, income: Bool = false, _ merchant: String, on account: BankAccount, category: String? = nil) {
+            let transaction = LedgerTransaction(date: calendar.date(byAdding: .hour, value: 12, to: date)!, amountCents: cents, isIncome: income,
+                                                merchant: merchant, source: .plaid)
+            transaction.bankCategory = category
+            context.insert(transaction)
+            transaction.account = account
+        }
+        for (month, cents) in [(8, 280_00), (9, 300_00), (10, 320_00)] {
+            add(day(month, 9), cents, "Card payment", on: checking, category: "LOAN_PAYMENTS")
+            add(day(month, 10), cents, income: true, "Payment", on: card, category: "LOAN_PAYMENTS")
+        }
+        add(day(10, 25), 120_00, "Hardware Barn", on: card)
+        try context.save()
+
+        func cardEvents() -> [CashFlowEvent] {
+            CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 45, calendar: calendar).forecast.events.filter { $0.kind == .card }
+        }
+        // No day set: the usual one from checking, the statement first and newer charges a month later.
+        var snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 45, calendar: calendar)
+        #expect(snapshot.patterns.isEmpty, "card payments aren't bills")
+        #expect(snapshot.cardsWithoutDueDay.isEmpty && snapshot.cardsOnUsualDay.map(\.name) == ["Card"])
+        #expect(snapshot.cards.first?.payments.map(\.amountCents) == [-680_00, -120_00])
+        #expect(cardEvents().map(\.date) == [day(11, 9), day(12, 9)])
+        #expect(cardEvents().allSatisfy { $0.isEstimate && $0.detail == "On your usual payment day" })
+
+        card.paymentMode = .minimum
+        #expect(cardEvents().map(\.amountCents) == [-40_00, -40_00])
+        #expect(cardEvents().first?.detail == "Estimated minimum, on your usual payment day")
+
+        card.paymentDueDay = 20
+        card.paymentMode = .usual
+        #expect(cardEvents().map(\.amountCents) == [-300_00])
+        #expect(cardEvents().map(\.date) == [day(11, 20)])
+        #expect(cardEvents().allSatisfy { !$0.isEstimate && $0.detail == nil })
+
+        card.paymentMode = .elsewhere
+        snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 45, calendar: calendar)
+        #expect(cardEvents().isEmpty && snapshot.cardsOnUsualDay.isEmpty && snapshot.cardsWithoutDueDay.isEmpty)
+    }
+
+    @Test func billsAndCardsFindTheirBudgetLines() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 5_000_00
+        let card = BankAccount(externalID: "card", name: "Card")
+        card.type = "credit"; card.currentBalanceCents = 500_00; card.paymentDueDay = 10
+        context.insert(checking)
+        context.insert(card)
+        let month = BudgetPlanner.createBlank(MonthKey(date: today, calendar: calendar), in: context)
+        let bills = BudgetPlanner.addGroup(named: "Bills", to: month, in: context)
+        var lines: [String: BudgetItem] = [:]
+        for (name, cents) in [("Car loan", 312_45), ("Home loan", 1_800_25), ("Credit card", 150_00), ("Groceries", 600_00)] {
+            let item = BudgetPlanner.addItem(named: name, to: bills, in: context)
+            item.plannedCents = cents
+            lines[name] = item
+        }
+        func add(_ date: Date, _ cents: Int, _ merchant: String) {
+            let transaction = LedgerTransaction(date: calendar.date(byAdding: .hour, value: 12, to: date)!, amountCents: cents, isIncome: false,
+                                                merchant: merchant, source: .plaid)
+            context.insert(transaction)
+            transaction.account = checking
+        }
+        for date in [day(8, 5), day(9, 5), day(10, 5)] { add(date, 312_45, "Granite Auto Finance") }
+        // A loan and its escrow, paid together: the two add up to the plan.
+        for date in [day(8, 3), day(9, 2), day(10, 3)] {
+            add(date, 1_412_00, "Harbor Home Loans")
+            add(date, 388_25, "Harbor Home Loans")
+        }
+        try context.save()
+
+        var snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 35, calendar: calendar)
+        let links = Dictionary(snapshot.patterns.map { ($0.id, $0.seriesID) }, uniquingKeysWith: { first, _ in first })
+        #expect(links["out:granite auto finance"] == lines["Car loan"]?.seriesID)
+        #expect(links["out:harbor home loans#1"] == lines["Home loan"]?.seriesID && links["out:harbor home loans#2"] == lines["Home loan"]?.seriesID)
+        #expect(snapshot.cards.first?.coversSeriesID == lines["Credit card"]?.seriesID)
+        // Only groceries are left as everyday spending; November borrows October's plan.
+        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 20_00)
+
+        // Saying a bill isn't in the budget puts its line back.
+        let granite = try #require(snapshot.patterns.first { $0.id == "out:granite auto finance" })
+        CashFlowPlanner.decision(for: granite, in: context).coversSeriesID = RecurringFlow.notInBudget
+        card.paymentCoversSeriesID = RecurringFlow.notInBudget
+        snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 35, calendar: calendar)
+        #expect(snapshot.cards.first?.coversSeriesID == nil)
+        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == (600_00 + 312_45 + 150_00) / 30 + 1)
+    }
+
+    @Test func budgetGroupsPaidByCardLeaveCheckingWithThePayment() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 5_000_00
+        let card = BankAccount(externalID: "card", name: "Card")
+        card.type = "credit"; card.currentBalanceCents = 0; card.paymentDueDay = 20
+        context.insert(checking)
+        context.insert(card)
+        let month = BudgetPlanner.createBlank(MonthKey(date: today, calendar: calendar), in: context)
+        let food = BudgetPlanner.addGroup(named: "Food", to: month, in: context)
+        BudgetPlanner.addItem(named: "Groceries", to: food, in: context).plannedCents = 600_00
+        let home = BudgetPlanner.addGroup(named: "Home", to: month, in: context)
+        BudgetPlanner.addItem(named: "Electric", to: home, in: context).plannedCents = 300_00
+        try context.save()
+
+        func snapshot() -> CashFlowPlanner.Snapshot { CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar) }
+        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 900_00 / 30)
+        #expect(snapshot().cards.first?.payments.isEmpty == true)
+
+        card.cardGroupNames = ["Food"]
+        // Groceries build up on the card: October's last day and Nov 1–25 close into the Dec 20 statement.
+        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 300_00 / 30)
+        #expect(snapshot().cards.first?.payments.map(\.amountCents) == [-(600_00 / 31 + 25 * 20_00)])
+        #expect(snapshot().cards.first?.payments.first?.date == day(12, 20))
+
+        // Paid from another account: groceries leave the forecast.
+        card.paymentMode = .elsewhere
+        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 300_00 / 30)
+        #expect(snapshot().forecast.events.allSatisfy { $0.kind != .card })
+    }
+
+    @Test func budgetLinesFollowWhereTheMoneyGoes() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 5_000_00
+        let card = BankAccount(externalID: "card", name: "Card")
+        card.type = "credit"; card.currentBalanceCents = 55_00; card.paymentDueDay = 20
+        context.insert(checking)
+        context.insert(card)
+        let month = BudgetPlanner.createBlank(MonthKey(date: today, calendar: calendar), in: context)
+        let income = BudgetGroup(name: "Income", isIncome: true, sortIndex: 0)
+        income.month = month
+        context.insert(income)
+        for (index, (name, cents)) in [("Paycheck", 2_000_00), ("Side work", 400_00)].enumerated() {
+            let item = BudgetItem(name: name, plannedCents: cents, sortIndex: index)
+            item.group = income
+            context.insert(item)
+        }
+        let home = BudgetPlanner.addGroup(named: "Home", to: month, in: context)
+        var lines: [String: BudgetItem] = [:]
+        for (name, cents) in [("Water", 75_00), ("Tutoring", 455_00), ("Electric", 410_00)] {
+            let item = BudgetPlanner.addItem(named: name, to: home, in: context)
+            item.plannedCents = cents
+            lines[name] = item
+        }
+        let food = BudgetPlanner.addGroup(named: "Food", to: month, in: context)
+        let groceries = BudgetPlanner.addItem(named: "Groceries", to: food, in: context)
+        groceries.plannedCents = 600_00
+        func add(_ date: Date, _ cents: Int, income: Bool = false, _ merchant: String, on account: BankAccount) -> LedgerTransaction {
+            let transaction = LedgerTransaction(date: calendar.date(byAdding: .hour, value: 12, to: date)!, amountCents: cents, isIncome: income,
+                                                merchant: merchant, source: .plaid)
+            context.insert(transaction)
+            transaction.account = account
+            return transaction
+        }
+        var payday = day(8, 6)
+        while payday <= today {
+            _ = add(payday, 2_000_00, income: true, "Payroll", on: checking)
+            payday = calendar.date(byAdding: .day, value: 14, to: payday)!
+        }
+        for month in 8...10 {
+            _ = add(day(month, 9), 91_40, "Riverside Water Authority", on: checking)
+            _ = add(day(month, 1), 438_10, "Bright Path Learning", on: checking)
+        }
+        // Paid once a month, but the latest one early.
+        for date in [day(7, 7), day(8, 8), day(9, 16), day(10, 2)] { _ = add(date, 1_500_00, "Summit Mortgage", on: checking) }
+        Ledger.assign(add(day(10, 20), 55_00, "Corner Grocer", on: card), to: groceries, in: context)
+        try context.save()
+
+        let snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar)
+        #expect(snapshot.patterns.contains { $0.name == "Summit Mortgage" && $0.cadence == .monthly })
+        let links = Dictionary(snapshot.patterns.map { ($0.name, $0.seriesID) }, uniquingKeysWith: { first, _ in first })
+        // Named in the bill, and the closest amount within 10% (Electric is close too, but not as close).
+        #expect(links["Riverside Water Authority"] == lines["Water"]?.seriesID)
+        #expect(links["Bright Path Learning"] == lines["Tutoring"]?.seriesID)
+        // Groceries were charged to the card, so they build up there; only Electric leaves checking day by day.
+        #expect(snapshot.cards.first?.chargedItemNames == ["Groceries"])
+        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 410_00 / 30 + 1)
+        #expect(snapshot.cards.first?.payments.map(\.amountCents) == [-55_00, -(600_00 / 31 + 25 * 20_00)])
+        #expect(snapshot.missingIncome == [CashFlowPlanner.MissingIncome(name: "Side work", cents: 400_00)])
+    }
+
     @Test func sampleHouseholdShowsItsPaydaysAndCard() throws {
         let container = try BetterDollarSchema.container(inMemory: true)
         DemoData.seed(into: container.mainContext)
@@ -234,6 +506,11 @@ import Testing
         card.type = "credit"
         card.paymentDueDay = 12
         card.paymentFixedCents = 300_00
+        card.paymentMode = .minimum
+        card.statementCloseDay = 18
+        card.paymentSplitsWithPay = true
+        card.paymentCoversSeriesID = RecurringFlow.notInBudget
+        card.cardGroupNames = ["Food", "Fun"]
         context.insert(card)
         let flow = RecurringFlow(key: "out:gym", isIncome: false)
         flow.isIgnored = true
@@ -247,6 +524,8 @@ import Testing
         try archive.restore(into: restored, vault: nil)
         let account = try #require(try restored.fetch(FetchDescriptor<BankAccount>()).first)
         #expect(account.paymentDueDay == 12 && account.paymentFixedCents == 300_00)
+        #expect(account.paymentMode == .minimum && account.statementCloseDay == 18 && account.paymentSplitsWithPay)
+        #expect(account.paymentCoversSeriesID == RecurringFlow.notInBudget && account.cardGroupNames == ["Food", "Fun"])
         let choice = try #require(try restored.fetch(FetchDescriptor<RecurringFlow>()).first)
         #expect(choice.key == "out:gym" && choice.isIgnored && choice.coversSeriesID == flow.coversSeriesID)
     }

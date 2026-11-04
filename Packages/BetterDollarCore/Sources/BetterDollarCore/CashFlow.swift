@@ -150,7 +150,7 @@ public struct RecurringPattern: Sendable, Hashable, Identifiable {
     public var dates: [Date]
     public var monthDays: [Int]
     public var category: String?
-    /// The budget item series its transactions were assigned to most, if any.
+    /// The budget item series it pays: the one its transactions were assigned to most, or one planned at exactly its amount.
     public var seriesID: UUID?
 
     public var lastDate: Date { dates.last ?? .distantPast }
@@ -197,15 +197,37 @@ public enum RecurringDetector {
         }
     }
 
-    /// Marks money sent from checking that arrives on a credit card (same amount within a few days).
+    /// Marks money sent from checking that arrives on a credit card.
     public static func markCardPayments(_ cash: inout [CashFlowHistoryEntry], cardHistory: [CashFlowHistoryEntry], calendar: Calendar = .current) {
         let received = cardHistory.filter(\.isIncome)
         for index in cash.indices where !cash[index].isIncome {
             let sent = cash[index]
-            cash[index].isCardPayment = received.contains { payment in
-                payment.amountCents == sent.amountCents && abs(payment.date.timeIntervalSince(sent.date)) <= 5 * 86_400
-            }
+            cash[index].isCardPayment = received.contains { arrived(sent, as: $0) }
         }
+    }
+
+    /// Money sent from checking that arrived on this card.
+    public static func payments(to cardHistory: [CashFlowHistoryEntry], from cash: [CashFlowHistoryEntry]) -> [CashFlowHistoryEntry] {
+        let received = cardHistory.filter(\.isIncome)
+        return cash.filter { sent in !sent.isIncome && received.contains { arrived(sent, as: $0) } }
+    }
+
+    /// A card payment shows up on the card for the same amount within a few days.
+    static func arrived(_ sent: CashFlowHistoryEntry, as received: CashFlowHistoryEntry) -> Bool {
+        received.amountCents == sent.amountCents && abs(received.date.timeIntervalSince(sent.date)) <= 5 * 86_400
+    }
+
+    /// When checking usually pays a card and how much a month: payments in at least two months, the latest recent.
+    public static func cardHabit(_ payments: [CashFlowHistoryEntry], today: Date, calendar: Calendar = .current) -> CardHabit? {
+        let today = calendar.startOfDay(for: today)
+        let days = payments.map { calendar.startOfDay(for: $0.date) }.sorted()
+        let months = Dictionary(grouping: payments) { MonthKey(date: $0.date, calendar: calendar) }
+        guard months.count >= 2, let last = days.last, (calendar.dateComponents([.day], from: last, to: today).day ?? 0) <= 62 else { return nil }
+        // Whole months only; this one isn't over. Counted high, like bills.
+        let current = MonthKey(date: today, calendar: calendar)
+        let totals = months.filter { $0.key < current }.map { $0.value.reduce(0) { $0 + $1.amountCents } }
+        guard !totals.isEmpty else { return nil }
+        return CardHabit(day: typicalDay(days, calendar: calendar), monthlyCents: middle(totals, roundingUp: true))
     }
 
     /// One stream per merchant, unless the same merchant takes several payments on the same days
@@ -269,11 +291,18 @@ public enum RecurringDetector {
             if let pair = semimonthlyDays(days, calendar: calendar) { return (.semimonthly, pair) }
             if share({ (12...16).contains($0) || (26...30).contains($0) }) >= 0.75 { return (.biweekly, []) }
             return nil
-        case 24...38 where share({ (24...38).contains($0) || (52...70).contains($0) }) >= 0.75:
+        // Monthly, or once in each of several months in a row even when one was paid early or late.
+        case 24...38 where share({ (24...38).contains($0) || (52...70).contains($0) }) >= 0.75 || oncePerMonth(days, calendar: calendar):
             return (.monthly, [typicalDay(days, calendar: calendar)])
         default:
             return nil
         }
+    }
+
+    /// One payment in each of at least three months in a row.
+    static func oncePerMonth(_ days: [Date], calendar: Calendar) -> Bool {
+        let months = days.map { MonthKey(date: $0, calendar: calendar) }
+        return months.count >= 3 && zip(months, months.dropFirst()).allSatisfy { $1 == $0.next }
     }
 
     /// Two tight clusters of days of the month, such as the 1st and 15th or the 15th and the last day.
@@ -328,21 +357,168 @@ public enum RecurringDetector {
 
 // MARK: - The forecast
 
-/// A credit card's payment. Card purchases leave checking only when the card is paid.
+/// How a credit card gets paid from checking.
+public enum CardPaymentMode: String, CaseIterable, Identifiable, Sendable {
+    case statement, balance, minimum, usual, fixed, elsewhere
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .statement: "Statement balance"
+        case .balance: "Full balance"
+        case .minimum: "Minimum payment"
+        case .usual: "What I usually pay"
+        case .fixed: "A set amount"
+        case .elsewhere: "Not from checking"
+        }
+    }
+}
+
+/// When checking usually pays a card, and how much in a month, from past payments.
+public struct CardHabit: Sendable, Hashable {
+    public var day: Int
+    /// A typical whole month's payments.
+    public var monthlyCents: Int
+}
+
+/// A credit card's payments. Card purchases leave checking only when the card is paid: what's owed today,
+/// plus budget spending from the groups paid with the card as it builds up. Other card spending after today
+/// is counted as everyday spending.
 public struct CardPayment: Sendable, Hashable, Identifiable {
+    /// One due date's payment and how much of it is budget spending charged after today.
+    public struct Payment: Sendable, Hashable {
+        public var date: Date
+        public var cents: Int
+        public var spendingCents: Int
+    }
+
+    public enum Plan: Sendable, Hashable {
+        /// Everything owed on each due date.
+        case balance
+        /// What's left of the last statement on the next due date, then each later statement in full.
+        case statement(remainingCents: Int)
+        /// The same amount each due date, while anything is owed.
+        case monthly(Int)
+    }
+
     public var id: String
     public var name: String
     public var dueDay: Int
-    public var amountCents: Int
-    /// A fixed amount repeats monthly. Paying the balance happens once: later card spending is part of everyday spending.
-    public var repeats: Bool
+    /// What's owed today.
+    public var owedCents: Int
+    public var plan: Plan
+    /// Pay in parts on the paydays before each due date.
+    public var splitsWithPay: Bool
+    /// The day or the amount is a guess.
+    public var isEstimate: Bool
+    /// Shown with each payment, such as where its day came from.
+    public var note: String?
+    /// Budget spending charged to the card from today on.
+    public var spending: [EverydaySpending]
+    /// The day of the month the statement closes, 0 when not set.
+    public var closeDay: Int
 
-    public init(id: String, name: String, dueDay: Int, amountCents: Int, repeats: Bool) {
+    public init(id: String, name: String, dueDay: Int, owedCents: Int, plan: Plan, splitsWithPay: Bool = false,
+                isEstimate: Bool = false, note: String? = nil, spending: [EverydaySpending] = [], closeDay: Int = 0) {
         self.id = id
         self.name = name
         self.dueDay = dueDay
-        self.amountCents = amountCents
-        self.repeats = repeats
+        self.owedCents = owedCents
+        self.plan = plan
+        self.splitsWithPay = splitsWithPay
+        self.isEstimate = isEstimate
+        self.note = note
+        self.spending = spending
+        self.closeDay = closeDay
+    }
+
+    /// What each due date through `end` pays, in order.
+    public func payments(from today: Date, through end: Date, calendar: Calendar = .current) -> [Payment] {
+        guard dueDay > 0 else { return [] }
+        let today = calendar.startOfDay(for: today)
+        var dates: [Date] = []
+        var date = CashFlowSchedule.first(onOrAfter: today, monthDays: [dueDay], calendar: calendar)
+        while date <= end {
+            dates.append(date)
+            date = CashFlowSchedule.following(date, cadence: .monthly, monthDays: [dueDay], calendar: calendar)
+        }
+        /// Budget spending charged after `after` (or from today) through `last`.
+        func charged(after: Date?, through last: Date) -> Int {
+            guard !spending.isEmpty else { return 0 }
+            var total = 0
+            var day = max(today, after.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } ?? today)
+            while day <= min(last, end) {
+                total += spending.reduce(0) { $0 + CashFlowForecast.share(of: $1, on: day, calendar: calendar) }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+            return total
+        }
+        var payments: [Payment] = []
+        switch plan {
+        case .balance:
+            var previous: Date?
+            for (index, date) in dates.enumerated() {
+                let new = charged(after: previous, through: date)
+                payments.append(Payment(date: date, cents: (index == 0 ? owedCents : 0) + new, spendingCents: new))
+                previous = date
+            }
+        case .statement(let remaining):
+            // Each statement holds what was charged before it closed.
+            let first = min(max(0, remaining), owedCents)
+            var previousClose: Date?
+            for (index, date) in dates.enumerated() {
+                let close = Self.statementClose(before: date, closeDay: closeDay, calendar: calendar)
+                let new = charged(after: previousClose, through: close)
+                let older = index == 0 ? first : index == 1 ? owedCents - first : 0
+                payments.append(Payment(date: date, cents: older + new, spendingCents: new))
+                previousClose = close
+            }
+        case .monthly(let cents):
+            var owed = owedCents
+            var previous: Date?
+            for date in dates {
+                owed += charged(after: previous, through: date)
+                let paid = min(max(0, cents), owed)
+                owed -= paid
+                payments.append(Payment(date: date, cents: paid, spendingCents: 0))
+                previous = date
+            }
+        }
+        return payments.filter { $0.cents > 0 }
+    }
+
+    /// Card payments arrive as these; other credits (refunds, rewards) lower the next statement.
+    static let paymentCategories: Set<String> = ["LOAN_PAYMENTS", "TRANSFER_IN"]
+
+    /// What's still owed on the statement the next due date pays: what's owed now, less what was charged after it
+    /// closed. When it hasn't closed yet, everything owed now is on it.
+    public static func statementRemaining(owedCents: Int, cardHistory: [CashFlowHistoryEntry], dueDay: Int, closeDay: Int,
+                                          today: Date, calendar: Calendar = .current) -> Int {
+        let today = calendar.startOfDay(for: today)
+        let due = CashFlowSchedule.first(onOrAfter: today, monthDays: [dueDay], calendar: calendar)
+        let close = statementClose(before: due, closeDay: closeDay, calendar: calendar)
+        guard close < today else { return owedCents }
+        let newer = cardHistory
+            .filter { calendar.startOfDay(for: $0.date) > close && !($0.isIncome && paymentCategories.contains($0.category ?? "")) }
+            .reduce(0) { $0 + ($1.isIncome ? -$1.amountCents : $1.amountCents) }
+        return min(max(0, owedCents - newer), owedCents)
+    }
+
+    /// Statements close about 25 days before the due date, or on the card's closing day at least three weeks before it.
+    static func statementClose(before due: Date, closeDay: Int, calendar: Calendar) -> Date {
+        guard closeDay > 0, let latest = calendar.date(byAdding: .day, value: -21, to: due) else {
+            return calendar.date(byAdding: .day, value: -25, to: due) ?? due
+        }
+        let month = MonthKey(date: latest, calendar: calendar)
+        let close = month.day(closeDay, calendar: calendar)
+        return close <= latest ? close : month.previous.day(closeDay, calendar: calendar)
+    }
+
+    /// Most cards ask for about 1% of the balance plus interest, and at least $40: roughly 3%, in whole dollars.
+    public static func estimatedMinimum(owedCents: Int) -> Int {
+        guard owedCents > 40_00 else { return max(0, owedCents) }
+        return max(40_00, (owedCents * 3 / 100 + 99) / 100 * 100)
     }
 }
 
@@ -415,6 +591,8 @@ public struct CashFlowEvent: Sendable, Hashable, Identifiable {
     public var isEstimate: Bool
     /// When a payment that hasn't shown up yet was expected. It's counted today.
     public var expectedDate: Date?
+    /// A line to show with it, such as which part of a split payment it is.
+    public var detail: String?
 }
 
 public struct CashFlowDay: Sendable, Hashable, Identifiable {
@@ -481,14 +659,14 @@ public struct CashFlowForecast: Sendable {
 
     static func events(for inputs: CashFlowInputs, today: Date, end: Date, calendar: Calendar) -> [CashFlowEvent] {
         var events: [CashFlowEvent] = []
-        func add(id: String, on date: Date, name: String, cents: Int, kind: CashFlowEvent.Kind, isEstimate: Bool) {
+        func add(id: String, on date: Date, name: String, cents: Int, kind: CashFlowEvent.Kind, isEstimate: Bool, detail: String? = nil) {
             guard date <= end else { return }
             if date >= today {
                 events.append(CashFlowEvent(id: "\(id)@\(date.timeIntervalSinceReferenceDate)", date: date, name: name, amountCents: cents,
-                                            kind: kind, isEstimate: isEstimate, expectedDate: nil))
+                                            kind: kind, isEstimate: isEstimate, expectedDate: nil, detail: detail))
             } else if (calendar.dateComponents([.day], from: date, to: today).day ?? 0) <= graceDays {
                 events.append(CashFlowEvent(id: "\(id)@\(date.timeIntervalSinceReferenceDate)", date: today, name: name, amountCents: cents,
-                                            kind: kind, isEstimate: isEstimate, expectedDate: date))
+                                            kind: kind, isEstimate: isEstimate, expectedDate: date, detail: detail))
             }
         }
         for schedule in inputs.schedules where schedule.amountCents > 0 {
@@ -497,14 +675,30 @@ public struct CashFlowForecast: Sendable {
                     kind: schedule.isIncome ? .payday : .bill, isEstimate: schedule.isEstimate)
             }
         }
-        for card in inputs.cards where card.dueDay > 0 && card.amountCents > 0 {
-            let first = CashFlowSchedule.first(onOrAfter: today, monthDays: [card.dueDay], calendar: calendar)
-            let dates = card.repeats
-                ? CashFlowSchedule(id: card.id, name: card.name, isIncome: false, amountCents: card.amountCents, cadence: .monthly,
-                                   nextDate: first, monthDays: [card.dueDay]).dates(through: end, calendar: calendar)
-                : [first]
-            for date in dates {
-                add(id: card.id, on: date, name: card.name, cents: -card.amountCents, kind: .card, isEstimate: false)
+        let paydays = Set(inputs.schedules.filter { $0.isIncome && $0.amountCents > 0 }.flatMap { $0.dates(through: end, calendar: calendar) })
+            .filter { $0 >= today }.sorted()
+        for card in inputs.cards {
+            for payment in card.payments(from: today, through: end, calendar: calendar) {
+                // Split evenly over the paydays since the last due date; any odd cents go with the last part.
+                let since = calendar.date(byAdding: .month, value: -1, to: payment.date) ?? payment.date
+                let parts = card.splitsWithPay ? paydays.filter { $0 > since && $0 <= payment.date } : []
+                let includes = payment.spendingCents > 0 ? "Includes about \(Money.format(payment.spendingCents, showsCents: false)) of budget spending" : nil
+                guard parts.count > 0 else {
+                    add(id: card.id, on: payment.date, name: card.name, cents: -payment.cents, kind: .card,
+                        isEstimate: card.isEstimate || includes != nil,
+                        detail: [card.note, includes].compactMap { $0 }.joined(separator: ". ").nonEmptyText)
+                    continue
+                }
+                let share = payment.cents / parts.count
+                let due = payment.date.formatted(.dateTime.month(.abbreviated).day())
+                for (index, date) in parts.enumerated() {
+                    let cents = index == parts.count - 1 ? payment.cents - share * (parts.count - 1) : share
+                    let detail = parts.count > 1 ? "Part \(index + 1) of \(parts.count), due \(due)"
+                        : date == payment.date ? [card.note, includes].compactMap { $0 }.joined(separator: ". ").nonEmptyText
+                        : "Paid on payday, due \(due)"
+                    add(id: "\(card.id)#\(index + 1)", on: date, name: card.name, cents: -cents, kind: .card,
+                        isEstimate: card.isEstimate || includes != nil, detail: detail)
+                }
             }
         }
         for bill in inputs.budgetBills where bill.amountCents > 0 && bill.date >= today {
@@ -682,4 +876,9 @@ public struct CashFlowForecast: Sendable {
         moved.expectedDate = nil
         return moved
     }
+}
+
+extension String {
+    /// Nil instead of an empty string.
+    var nonEmptyText: String? { isEmpty ? nil : self }
 }

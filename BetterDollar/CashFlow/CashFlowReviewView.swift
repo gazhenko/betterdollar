@@ -11,7 +11,7 @@ struct CashFlowReviewView: View {
 
     let focus: Focus
     let patterns: [RecurringPattern]
-    let usualCardPaymentDay: Int?
+    let cardInfo: [CashFlowPlanner.Card]
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -30,7 +30,16 @@ struct CashFlowReviewView: View {
                     flowSection(income: false)
                     if !cards.isEmpty {
                         Section {
-                            ForEach(cards) { CardPaymentEditor(account: $0) }
+                            ForEach(cards) { account in
+                                let info = cardInfo.first { $0.id == account.uuid }
+                                NavigationLink {
+                                    CardPaymentDetail(account: account)
+                                } label: {
+                                    FlowRow(name: account.displayName, detail: cardDetail(account, info),
+                                            cents: info?.payments.first.map { -$0.amountCents } ?? max(0, account.currentBalanceCents ?? 0),
+                                            isOff: account.paymentMode == .elsewhere)
+                                }
+                            }
                         } header: {
                             Text("Credit cards")
                         } footer: {
@@ -111,11 +120,15 @@ struct CashFlowReviewView: View {
     }
 
     private var cardFooter: String {
-        var text = "Card purchases leave checking when you pay the card. Full balance pays what you owe now, once; after that, card spending counts as everyday spending."
-        if let usualCardPaymentDay {
-            text += " Card payments usually leave your checking around the \(ordinal(usualCardPaymentDay))."
-        }
-        return text
+        "Card purchases leave checking when you pay the card. Pick the budget groups you pay with a card so that spending leaves checking with the card payment, not day by day."
+    }
+
+    private func cardDetail(_ account: BankAccount, _ info: CashFlowPlanner.Card?) -> String {
+        let mode = account.paymentMode
+        if mode == .elsewhere { return "Not paid from checking" }
+        guard account.paymentDueDay > 0 || info?.habit != nil else { return "No due day set" }
+        let next = info?.payments.first.map { ", next \(CashFlowFormat.short($0.date))" } ?? ""
+        return mode.title + next + (info?.usesUsualDay == true ? ", usual day" : "")
     }
 }
 
@@ -195,38 +208,159 @@ private struct PatternDetailView: View {
     }
 }
 
-/// A card's payment day and amount.
-private struct CardPaymentEditor: View {
+/// One card: how much is paid and when, and what that puts in the forecast.
+private struct CardPaymentDetail: View {
     @Bindable var account: BankAccount
-    @State private var usesSetAmount = false
+    @Environment(\.modelContext) private var context
+    @Query private var accounts: [BankAccount]
+    @AppStorage("cashFlowCushion") private var cushionCents = 0
+    @AppStorage("cashFlowManualBalance") private var manualBalanceCents = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(account.displayName).font(.body.weight(.semibold))
-                Spacer()
-                Text("owes \(Money.format(max(0, account.currentBalanceCents ?? 0)))")
-                    .font(Typeface.amountSmall)
-                    .foregroundStyle(Ink.secondary)
+        // Worked out here so the forecast below follows every change.
+        let info = CashFlowPlanner.snapshot(in: context, cushionCents: cushionCents, manualBalanceCents: manualBalanceCents)
+            .cards.first { $0.id == account.uuid }
+        let mode = account.paymentMode
+        Form {
+            Section {
+                Picker("Pay", selection: $account.paymentMode) {
+                    ForEach(CardPaymentMode.allCases) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("card-pay-mode")
+                if mode == .minimum {
+                    MoneyField(title: "Minimum due", cents: $account.paymentFixedCents,
+                               prompt: Money.editableText(info?.estimatedMinimumCents ?? 0))
+                } else if mode == .fixed {
+                    MoneyField(title: "Each month", cents: $account.paymentFixedCents)
+                }
+            } footer: {
+                Text(modeFooter(mode, info))
             }
-            Picker("Payment due", selection: $account.paymentDueDay) {
-                Text("Not set").tag(0)
-                ForEach(1...31, id: \.self) { Text("The \(ordinal($0))").tag($0) }
+            if mode != .elsewhere {
+                Section {
+                    Picker("Due", selection: $account.paymentDueDay) {
+                        Text(info?.habit.map { "Usual day, the \(ordinal($0.day))" } ?? "Not set").tag(0)
+                        ForEach(1...31, id: \.self) { Text("The \(ordinal($0))").tag($0) }
+                    }
+                    if mode == .statement {
+                        Picker("Statement closes", selection: $account.statementCloseDay) {
+                            Text("About 25 days before").tag(0)
+                            ForEach(1...31, id: \.self) { Text("The \(ordinal($0))").tag($0) }
+                        }
+                    }
+                    Toggle("Pay in parts on paydays", isOn: $account.paymentSplitsWithPay)
+                } footer: {
+                    Text(dayFooter(info))
+                }
             }
-            Picker("Pay", selection: $usesSetAmount) {
-                Text("Full balance").tag(false)
-                Text("A set amount").tag(true)
+            Section {
+                if groupNames.isEmpty {
+                    Text("Plan a budget to choose its groups.").foregroundStyle(Ink.secondary)
+                }
+                ForEach(groupNames, id: \.self) { name in
+                    Toggle(name, isOn: Binding(get: { account.cardGroupNames.contains(name) }, set: { setGroup(name, paidByCard: $0) }))
+                }
+            } header: {
+                Text("Paid with this card")
+            } footer: {
+                Text(groupsFooter(mode, info))
             }
-            .pickerStyle(.segmented)
-            if usesSetAmount {
-                MoneyField(title: "Each month", cents: $account.paymentFixedCents)
+            if mode != .elsewhere {
+                Section {
+                    Picker("Pays for", selection: Binding(get: { info?.coversSeriesID },
+                                                          set: { account.paymentCoversSeriesID = $0 ?? RecurringFlow.notInBudget })) {
+                        Text("Not in my budget").tag(UUID?.none)
+                        ForEach(CashFlowPlanner.currentPlanItems(in: context)) { item in Text(item.name).tag(UUID?.some(item.seriesID)) }
+                    }
+                } footer: {
+                    Text("Linking it to the budget item for this card keeps that item from being counted a second time.")
+                }
+                Section("In the forecast") {
+                    if let payments = info?.payments, !payments.isEmpty {
+                        ForEach(payments) { payment in
+                            VStack(alignment: .leading, spacing: 2) {
+                                LedgerLine(label: CashFlowFormat.weekday(payment.date), cents: payment.amountCents)
+                                if let detail = payment.detail {
+                                    Text(detail).font(.caption).foregroundStyle(Ink.secondary)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(account.paymentDueDay == 0 && info?.habit == nil ? "Set a due day to add this card." : "Nothing to pay in the next 60 days.")
+                            .foregroundStyle(Ink.secondary)
+                    }
+                }
+            }
+            if let habit = info?.habit {
+                Section {
+                    LabeledContent("Usually around", value: "the \(ordinal(habit.day))")
+                    LabeledContent("A typical month", value: Money.format(habit.monthlyCents))
+                } header: {
+                    Text("Paid from checking before")
+                } footer: {
+                    Text("From payments that left checking and showed up on this card.")
+                }
             }
         }
-        .padding(.vertical, 4)
-        .onAppear { usesSetAmount = account.paymentFixedCents > 0 }
-        .onChange(of: usesSetAmount) { _, setAmount in
-            if !setAmount { account.paymentFixedCents = 0 }
+        .scrollContentBackground(.hidden)
+        .paperBackground()
+        .navigationTitle(account.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func modeFooter(_ mode: CardPaymentMode, _ info: CashFlowPlanner.Card?) -> String {
+        let owed = Money.format(info?.balanceCents ?? max(0, account.currentBalanceCents ?? 0))
+        switch mode {
+        case .statement:
+            let statement = info?.statementCents.map { " About \(Money.format($0)) is still owed on the last one." } ?? ""
+            return "Pays the last statement on the due date, then each new statement in full.\(statement)"
+        case .balance:
+            return "Pays everything owed on each due date: \(owed) now, plus spending from the groups paid with this card."
+        case .minimum:
+            return "Pays the minimum each month while anything is owed. Enter the minimum from your statement, or leave it empty to use an estimate."
+        case .usual:
+            guard let habit = info?.habit else {
+                return "There aren't enough payments from checking to this card yet, so the statement balance is used for now."
+            }
+            return "Pays \(Money.format(habit.monthlyCents)) a month, what checking usually sends this card, while anything is owed."
+        case .fixed:
+            return "Pays this amount each month while anything is owed. Anything more stays on the card."
+        case .elsewhere:
+            return "Leaves this card out of the forecast, for a card you pay from another account."
         }
+    }
+
+    private func groupsFooter(_ mode: CardPaymentMode, _ info: CashFlowPlanner.Card?) -> String {
+        var text = mode == .elsewhere
+            ? "Spending in these budget groups stays out of checking, since this card is paid from another account."
+            : "Spending in these budget groups builds up on the card and leaves checking with the card payment instead of day by day."
+        if let names = info?.chargedItemNames, !names.isEmpty {
+            text += " \(names.formatted(.list(type: .and))) already count here, since that's where you've charged them."
+        }
+        return text
+    }
+
+    private var groupNames: [String] {
+        (CashFlowPlanner.currentPlan(in: context)?.expenseGroups ?? []).map(\.name)
+    }
+
+    /// A group is paid with one card at most.
+    private func setGroup(_ name: String, paidByCard: Bool) {
+        guard paidByCard else {
+            account.cardGroupNames.remove(name)
+            return
+        }
+        for other in accounts where other.uuid != account.uuid && other.cardGroupNames.contains(name) {
+            other.cardGroupNames.remove(name)
+        }
+        account.cardGroupNames.insert(name)
+    }
+
+    private func dayFooter(_ info: CashFlowPlanner.Card?) -> String {
+        let parts = account.paymentSplitsWithPay ? " Each payment is split evenly across the paychecks before it's due." : ""
+        guard account.paymentDueDay == 0 else { return "The day the payment leaves checking.\(parts)" }
+        guard let habit = info?.habit else { return "Pick the day you pay this card to add it to the forecast.\(parts)" }
+        return "Checking usually pays this card around the \(ordinal(habit.day)). Pick a day to change it.\(parts)"
     }
 }
 

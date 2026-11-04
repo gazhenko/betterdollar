@@ -9,8 +9,29 @@ import SwiftData
         public var id: UUID
         public var name: String
         public var balanceCents: Int
+        /// The due day that was set; 0 when it wasn't.
         public var dueDay: Int
-        public var fixedCents: Int
+        public var mode: CardPaymentMode
+        /// When and how much checking has paid it before.
+        public var habit: CardHabit?
+        /// What paying the statement would send on the next due date, once the day is known.
+        public var statementCents: Int?
+        /// The budget item its payments pay for, chosen or matched by name.
+        public var coversSeriesID: UUID?
+        /// Budget items whose spending has mostly been charged to this card, so it's counted on the card.
+        public var chargedItemNames: [String] = []
+        public var estimatedMinimumCents: Int
+        /// Its payments in the forecast.
+        public var payments: [CashFlowEvent]
+
+        /// No day was set, so it's paid on the day it usually is.
+        public var usesUsualDay: Bool { dueDay == 0 && habit != nil && mode != .elsewhere }
+    }
+
+    /// A budget income line the forecast doesn't see.
+    public struct MissingIncome: Sendable, Hashable {
+        public var name: String
+        public var cents: Int
     }
 
     /// Everything the cash flow screens show.
@@ -25,12 +46,15 @@ import SwiftData
         public var usesManualBalance: Bool
         public var balanceAsOf: Date?
         public var cards: [Card]
-        /// The day of the month card payments usually leave checking, from history.
-        public var usualCardPaymentDay: Int?
         public var savingsCents: Int
+        /// Income the budget plans that no paycheck in the forecast matches, so it isn't counted.
+        public var missingIncome: [MissingIncome] = []
 
         public var hasPaydays: Bool { forecast.events.contains { $0.kind == .payday } }
-        public var cardsWithoutDueDay: [Card] { cards.filter { $0.dueDay == 0 && $0.balanceCents > 0 } }
+        /// Cards with a balance the forecast can't place: no day set and none found in history.
+        public var cardsWithoutDueDay: [Card] { cards.filter { $0.dueDay == 0 && $0.habit == nil && $0.mode != .elsewhere && $0.balanceCents > 0 } }
+        /// Cards with a balance placed on the day they're usually paid, until someone confirms it.
+        public var cardsOnUsualDay: [Card] { cards.filter { $0.usesUsualDay && $0.balanceCents > 0 } }
     }
 
     /// Plaid categories that move money rather than spend it.
@@ -67,13 +91,21 @@ import SwiftData
         var cash = transactions.filter { transaction in
             transaction.account.map { checkingIDs.contains($0.persistentModelID) } ?? checking.isEmpty
         }.map(entry)
-        let cardHistory = transactions.filter { $0.account.map { cardIDs.contains($0.persistentModelID) } ?? false }.map(entry)
+        var historyByCard: [PersistentIdentifier: [CashFlowHistoryEntry]] = [:]
+        for transaction in transactions {
+            guard let account = transaction.account, cardIDs.contains(account.persistentModelID) else { continue }
+            historyByCard[account.persistentModelID, default: []].append(entry(transaction))
+        }
+        let cardHistory = historyByCard.values.flatMap { $0 }
         RecurringDetector.markCardPayments(&cash, cardHistory: cardHistory, calendar: calendar)
-        let patterns = RecurringDetector.detect(cash, today: today, calendar: calendar)
+        var patterns = RecurringDetector.detect(cash, today: today, calendar: calendar)
 
         // Paychecks and bills: detected ones as the person left them, plus ones added by hand.
         let flows = (try? context.fetch(FetchDescriptor<RecurringFlow>())) ?? []
         let decisions = Dictionary(flows.filter { !$0.isManual }.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let current = MonthKey(date: today, calendar: calendar)
+        var planItems = currentPlanItems(in: context, current: current).filter { !$0.isFund && $0.plannedCents > 0 }
+        linkByAmount(&patterns, items: &planItems, decisions: decisions)
         var schedules: [CashFlowSchedule] = []
         for pattern in patterns {
             let decision = decisions[pattern.id]
@@ -89,49 +121,139 @@ import SwiftData
             if let schedule = schedule(for: flow, today: today, calendar: calendar) { schedules.append(schedule) }
         }
 
-        let cardPayments = cards.compactMap { card -> CardPayment? in
-            guard card.paymentDueDay > 0 else { return nil }
+        // Cards: paid on the day that was set, or the day checking usually pays them.
+        var cardPayments: [CardPayment] = []
+        var cardInfo: [Card] = []
+        for card in cards {
+            let history = historyByCard[card.persistentModelID] ?? []
+            let habit = RecurringDetector.cardHabit(RecurringDetector.payments(to: history, from: cash), today: today, calendar: calendar)
+            let owed = max(0, card.currentBalanceCents ?? 0)
+            let mode = card.paymentMode
+            let dueDay = card.paymentDueDay > 0 ? card.paymentDueDay : habit?.day ?? 0
+            let statement = dueDay > 0 ? CardPayment.statementRemaining(owedCents: owed, cardHistory: history, dueDay: dueDay,
+                                                                         closeDay: card.statementCloseDay, today: today, calendar: calendar) : nil
             let fixed = card.paymentFixedCents
-            return CardPayment(id: "card:\(card.uuid)", name: card.displayName, dueDay: card.paymentDueDay,
-                               amountCents: fixed > 0 ? fixed : max(0, card.currentBalanceCents ?? 0), repeats: fixed > 0)
+            let minimum = CardPayment.estimatedMinimum(owedCents: owed)
+            let chosen = card.paymentCoversSeriesID.map { $0 == RecurringFlow.notInBudget ? nil : $0 }
+            cardInfo.append(Card(id: card.uuid, name: card.displayName, balanceCents: owed, dueDay: card.paymentDueDay, mode: mode,
+                                 habit: habit, statementCents: statement, coversSeriesID: chosen ?? nil, estimatedMinimumCents: minimum, payments: []))
+            guard mode != .elsewhere, dueDay > 0 else { continue }
+            let plan: CardPayment.Plan = switch mode {
+            case .balance: .balance
+            case .minimum: .monthly(fixed > 0 ? fixed : minimum)
+            case .usual: habit.map { .monthly($0.monthlyCents) } ?? .statement(remainingCents: statement ?? owed)
+            case .fixed where fixed > 0: .monthly(fixed)
+            default: .statement(remainingCents: statement ?? owed)
+            }
+            let guessesAmount = mode == .minimum && fixed == 0
+            let note: String? = switch (guessesAmount, card.paymentDueDay == 0) {
+            case (true, true): "Estimated minimum, on your usual payment day"
+            case (true, false): "Estimated minimum"
+            case (false, true): "On your usual payment day"
+            case (false, false): nil
+            }
+            cardPayments.append(CardPayment(id: "card:\(card.uuid)", name: card.displayName, dueDay: dueDay, owedCents: owed, plan: plan,
+                                            splitsWithPay: card.paymentSplitsWithPay, isEstimate: guessesAmount || card.paymentDueDay == 0,
+                                            note: note, closeDay: card.statementCloseDay))
         }
-        let cardPaymentDays = cash.filter(\.isCardPayment).map { calendar.startOfDay(for: $0.date) }
 
-        // Spending this month that hasn't been assigned yet still uses up everyday budget.
-        let current = MonthKey(date: today, calendar: calendar)
+        // A card nobody linked pays for the one budget item named like a card payment, if there's just one of each.
+        let paid = Set(cardPayments.map(\.id))
+        let unlinked = cardInfo.indices.filter { index in
+            paid.contains("card:\(cardInfo[index].id)") && cards[index].paymentCoversSeriesID == nil
+        }
+        let named = planItems.filter { $0.name.lowercased().contains("card") }
+        if unlinked.count == 1, named.count == 1, let index = unlinked.first {
+            cardInfo[index].coversSeriesID = named[0].seriesID
+        }
+
+        // Spending is counted on a card, not from checking day by day, for the budget groups chosen for it and for
+        // items mostly charged to it before. A card paid from another account takes that spending out of the
+        // forecast; one without a payment day leaves it in checking.
+        var spentOn: [String: String] = [:]
+        let counted = cards.filter { paid.contains("card:\($0.uuid)") || $0.paymentMode == .elsewhere }
+        for card in counted {
+            for name in card.cardGroupNames where spentOn[name] == nil { spentOn[name] = "card:\(card.uuid)" }
+        }
+        let poolOfCard = Dictionary(cards.map { ($0.persistentModelID, "card:\($0.uuid)") }, uniquingKeysWith: { first, _ in first })
+        let countedIDs = Set(counted.map(\.persistentModelID))
+        var chargedTo: [UUID: [PersistentIdentifier: Int]] = [:]
+        for transaction in transactions where !transaction.isIncome {
+            guard let account = transaction.account else { continue }
+            for allocation in transaction.allocations ?? [] {
+                guard let seriesID = allocation.item?.seriesID else { continue }
+                chargedTo[seriesID, default: [:]][account.persistentModelID, default: 0] += allocation.amountCents
+            }
+        }
+        let itemCards: [UUID: String] = chargedTo.compactMapValues { accounts in
+            accounts.max { $0.value < $1.value }.flatMap { countedIDs.contains($0.key) ? poolOfCard[$0.key] : nil }
+        }
+        let groupCards = Set(spentOn.values).union(itemCards.values)
+        let planNames = Dictionary(currentPlanItems(in: context, current: current).map { ($0.seriesID, $0.name) }, uniquingKeysWith: { first, _ in first })
+        for index in cardInfo.indices {
+            let key = "card:\(cardInfo[index].id)"
+            cardInfo[index].chargedItemNames = itemCards.filter { $0.value == key }.compactMap { planNames[$0.key] }.sorted()
+        }
+
+        // Spending this month that hasn't been assigned yet still uses up everyday budget, on the card it was charged to.
         let billMerchants = Set(patterns.filter { !$0.isIncome }.map { merchantKey(of: $0.id) })
-        let unassigned = (cash + cardHistory).filter { entry in
-            !entry.isIncome && !entry.isCardPayment && entry.seriesIDs.isEmpty && current.contains(entry.date, calendar: calendar)
-                && !movementCategories.contains(entry.category ?? "")
-                && !billMerchants.contains(Ledger.normalizedMerchant(RecurringDetector.displayName(entry.merchant)))
-        }.reduce(0) { $0 + $1.amountCents }
+        func unassigned(_ entries: [CashFlowHistoryEntry]) -> Int {
+            entries.filter { entry in
+                !entry.isIncome && !entry.isCardPayment && entry.seriesIDs.isEmpty && current.contains(entry.date, calendar: calendar)
+                    && !movementCategories.contains(entry.category ?? "")
+                    && !billMerchants.contains(Ledger.normalizedMerchant(RecurringDetector.displayName(entry.merchant)))
+            }.reduce(0) { $0 + $1.amountCents }
+        }
+        var unassignedCents: [String: Int] = ["": unassigned(cash)]
+        for (id, history) in historyByCard {
+            let pool = poolOfCard[id].flatMap { groupCards.contains($0) ? $0 : nil } ?? ""
+            unassignedCents[pool, default: 0] += unassigned(history)
+        }
 
-        let (bills, everyday) = budget(in: context, today: today, end: end, current: current, covered: Set(schedules.compactMap(\.coversSeriesID)),
-                                       unassignedCents: unassigned, calendar: calendar)
+        let covered = Set(schedules.compactMap(\.coversSeriesID) + cardInfo.filter { paid.contains("card:\($0.id)") }.compactMap(\.coversSeriesID))
+        let (bills, spending) = budget(in: context, today: today, end: end, current: current, covered: covered, spentOn: spentOn,
+                                       itemCards: itemCards, unassignedCents: unassignedCents, calendar: calendar)
+        let everyday = spending[""] ?? []
+        for index in cardPayments.indices {
+            cardPayments[index].spending = spending[cardPayments[index].id] ?? []
+        }
         let inputs = CashFlowInputs(today: today, horizonDays: horizonDays,
                                     startingCents: checking.isEmpty ? manualBalanceCents : checking.reduce(0) { $0 + balance($1) },
                                     cushionCents: cushionCents, schedules: schedules, cards: cardPayments, budgetBills: bills,
                                     everyday: everyday, savingsCents: savings.reduce(0) { $0 + max(0, balance($1)) })
+        let forecast = CashFlowForecast.make(inputs, calendar: calendar)
+        let paychecks = schedules.filter(\.isIncome)
+        let planned = (currentPlan(in: context, current: current)?.sortedGroups ?? []).filter(\.isIncome).flatMap(\.sortedItems)
+        let missingIncome = planned.filter { item in
+            item.plannedCents > 0 && !paychecks.contains { paycheck in
+                abs(paycheck.amountCents - item.plannedCents) * 100 <= item.plannedCents
+                    || !significantWords(paycheck.name).isDisjoint(with: significantWords(item.name))
+            }
+        }.map { MissingIncome(name: $0.name, cents: $0.plannedCents) }
+        for index in cardInfo.indices {
+            cardInfo[index].payments = forecast.events.filter { $0.id.hasPrefix("card:\(cardInfo[index].id)") }
+        }
         return Snapshot(
-            forecast: CashFlowForecast.make(inputs, calendar: calendar),
+            forecast: forecast,
             patterns: patterns,
             unreviewedCount: patterns.filter { decisions[$0.id] == nil }.count,
             checkingNames: checking.map(\.displayName),
             usesManualBalance: checking.isEmpty,
             balanceAsOf: checking.compactMap { $0.link?.lastSyncedAt }.min(),
-            cards: cards.map { Card(id: $0.uuid, name: $0.displayName, balanceCents: max(0, $0.currentBalanceCents ?? 0),
-                                    dueDay: $0.paymentDueDay, fixedCents: $0.paymentFixedCents) },
-            usualCardPaymentDay: cardPaymentDays.count >= 2 ? RecurringDetector.typicalDay(cardPaymentDays, calendar: calendar) : nil,
-            savingsCents: inputs.savingsCents)
+            cards: cardInfo,
+            savingsCents: inputs.savingsCents,
+            missingIncome: missingIncome)
     }
 
     /// Budget items with due days become dated bills; the rest of the plan is everyday spending.
     /// Months without a plan borrow the latest earlier one. Funds stay in checking until spent, so they're left out.
-    static func budget(in context: ModelContext, today: Date, end: Date, current: MonthKey, covered: Set<UUID>, unassignedCents: Int,
-                       calendar: Calendar) -> ([BudgetBill], [EverydaySpending]) {
+    /// Groups in `spentOn` and items in `itemCards` are spent on that card instead, keyed by its payment's ID;
+    /// checking's spending is under "".
+    static func budget(in context: ModelContext, today: Date, end: Date, current: MonthKey, covered: Set<UUID>, spentOn: [String: String] = [:],
+                       itemCards: [UUID: String] = [:], unassignedCents: [String: Int], calendar: Calendar) -> ([BudgetBill], [String: [EverydaySpending]]) {
         let months = (try? context.fetch(FetchDescriptor<BudgetMonth>(sortBy: [SortDescriptor(\.key)]))) ?? []
         var bills: [BudgetBill] = []
-        var everyday: [EverydaySpending] = []
+        var spending: [String: [EverydaySpending]] = [:]
         var key = current
         let last = MonthKey(date: end, calendar: calendar)
         while key <= last {
@@ -139,32 +261,99 @@ import SwiftData
             let exact = months.first { $0.key == key.id }
             guard let plan = exact ?? months.last(where: { $0.monthKey < key }) else { continue }
             let isThisMonth = key == current && exact != nil
-            var pool = 0
-            var plannedPool = 0
-            for item in plan.expenseGroups.flatMap(\.sortedItems) where !item.isFund && !covered.contains(item.seriesID) {
-                if item.dueDay == 0 { plannedPool += item.plannedCents }
-                let left = isThisMonth ? max(0, item.plannedCents - BudgetMath.activity(of: item)) : item.plannedCents
-                guard left > 0 else { continue }
-                if item.dueDay > 0 {
-                    let date = key.day(item.dueDay, calendar: calendar)
-                    if date >= today {
-                        bills.append(BudgetBill(seriesID: item.seriesID, name: item.name, date: date, amountCents: left, isEstimate: exact == nil))
+            let start = key == current ? today : key.firstDay(calendar: calendar)
+            var pools: [String: Int] = [:]
+            var plannedPools: [String: Int] = [:]
+            for group in plan.expenseGroups {
+                for item in group.sortedItems where !item.isFund && !covered.contains(item.seriesID) {
+                    let pool = spentOn[group.name] ?? itemCards[item.seriesID] ?? ""
+                    if item.dueDay == 0 { plannedPools[pool, default: 0] += item.plannedCents }
+                    let left = isThisMonth ? max(0, item.plannedCents - BudgetMath.activity(of: item)) : item.plannedCents
+                    guard left > 0 else { continue }
+                    if item.dueDay > 0 {
+                        let date = key.day(item.dueDay, calendar: calendar)
+                        guard date >= today else { continue }
+                        if pool.isEmpty {
+                            bills.append(BudgetBill(seriesID: item.seriesID, name: item.name, date: date, amountCents: left, isEstimate: exact == nil))
+                        } else {
+                            // Charged to the card on its day.
+                            spending[pool, default: []].append(EverydaySpending(start: date, end: date, amountCents: left))
+                        }
+                    } else {
+                        pools[pool, default: 0] += left
                     }
-                } else {
-                    pool += left
                 }
             }
-            let start = key == current ? today : key.firstDay(calendar: calendar)
-            if key == current {
-                // What's left this month, but never faster than the plan's usual pace: budget left over on
-                // the last few days is more likely saved than spent all at once.
-                let daysInMonth = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
-                let daysLeft = (calendar.dateComponents([.day], from: today, to: key.lastDay(calendar: calendar)).day ?? 0) + 1
-                pool = min(max(0, pool - unassignedCents), plannedPool * daysLeft / daysInMonth)
+            for pool in Set(pools.keys).union([""]) {
+                var amount = pools[pool] ?? 0
+                if key == current {
+                    // What's left this month, but never faster than the plan's usual pace: budget left over on
+                    // the last few days is more likely saved than spent all at once.
+                    let daysInMonth = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
+                    let daysLeft = (calendar.dateComponents([.day], from: today, to: key.lastDay(calendar: calendar)).day ?? 0) + 1
+                    amount = min(max(0, amount - (unassignedCents[pool] ?? 0)), (plannedPools[pool] ?? 0) * daysLeft / daysInMonth)
+                }
+                spending[pool, default: []].append(EverydaySpending(start: start, end: key.lastDay(calendar: calendar), amountCents: amount))
             }
-            everyday.append(EverydaySpending(start: start, end: key.lastDay(calendar: calendar), amountCents: pool))
         }
-        return (bills, everyday)
+        return (bills, spending)
+    }
+
+    /// This month's plan, or the latest one before it.
+    public static func currentPlan(in context: ModelContext, current: MonthKey = .current()) -> BudgetMonth? {
+        let months = (try? context.fetch(FetchDescriptor<BudgetMonth>(sortBy: [SortDescriptor(\.key)]))) ?? []
+        return months.last { $0.monthKey <= current } ?? months.first
+    }
+
+    public static func currentPlanItems(in context: ModelContext, current: MonthKey = .current()) -> [BudgetItem] {
+        (currentPlan(in: context, current: current)?.expenseGroups ?? []).flatMap(\.sortedItems)
+    }
+
+    /// A bill nobody has linked pays for a budget item: first one planned at exactly its amount, or at exactly what one
+    /// company's payments add up to (a loan and its escrow); then one named in the bill's name ("Water" in "County
+    /// Department of Water"); then the closest within 10% of its amount. Each item is matched once and leaves `items`.
+    static func linkByAmount(_ patterns: inout [RecurringPattern], items: inout [BudgetItem], decisions: [String: RecurringFlow]) {
+        let linked = Set(patterns.compactMap { covers(decisions[$0.id], $0) })
+        items.removeAll { linked.contains($0.seriesID) }
+        func amount(_ pattern: RecurringPattern) -> Int {
+            decisions[pattern.id].flatMap { $0.amountCents > 0 ? $0.amountCents : nil } ?? pattern.amountCents
+        }
+        func take(where matches: (BudgetItem) -> Bool, onlyOne: Bool = false) -> UUID? {
+            let found = items.indices.filter { matches(items[$0]) }
+            guard let index = found.first, !onlyOne || found.count == 1 else { return nil }
+            return items.remove(at: index).seriesID
+        }
+        var open: [Int] {
+            patterns.indices.filter { !patterns[$0].isIncome && covers(decisions[patterns[$0].id], patterns[$0]) == nil
+                && decisions[patterns[$0].id]?.coversSeriesID == nil }
+        }
+        for index in open {
+            patterns[index].seriesID = take { $0.plannedCents == amount(patterns[index]) }
+        }
+        let byCompany = Dictionary(grouping: open) { merchantKey(of: patterns[$0].id) }
+        for indices in byCompany.values where indices.count > 1 {
+            let total = indices.reduce(0) { $0 + amount(patterns[$1]) }
+            guard let seriesID = take(where: { $0.plannedCents == total }) else { continue }
+            for index in indices { patterns[index].seriesID = seriesID }
+        }
+        for index in open {
+            let words = significantWords(patterns[index].name)
+            patterns[index].seriesID = take(where: { !significantWords($0.name).isDisjoint(with: words) }, onlyOne: true)
+        }
+        for index in open {
+            let cents = amount(patterns[index])
+            let close = items.filter { abs($0.plannedCents - cents) * 10 <= cents }.map { abs($0.plannedCents - cents) }.sorted()
+            guard let nearest = close.first, close.dropFirst().first != nearest else { continue }
+            patterns[index].seriesID = take(where: { abs($0.plannedCents - cents) == nearest })
+        }
+    }
+
+    /// Words that say what a bill or budget item is, without the ones every bill shares.
+    static func significantWords(_ name: String) -> Set<String> {
+        let common: Set<String> = ["payment", "payments", "bill", "bills", "bank", "card", "credit", "loan", "loans", "monthly",
+                                   "service", "services", "company", "department", "county", "city",
+                                   "paycheck", "income", "salary", "direct", "deposit", "payroll"]
+        return Set(name.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 4 && !common.contains($0) })
     }
 
     static func schedule(for flow: RecurringFlow, today: Date, calendar: Calendar) -> CashFlowSchedule? {

@@ -180,8 +180,16 @@ private struct DayDetail: View {
                 .foregroundStyle(Ink.text)
             LedgerLine(label: "Checking at the start", cents: day.startCents, signed: false)
             ForEach(day.events) { event in
-                LedgerLine(label: event.name, note: event.expectedDate.map { "expected \(CashFlowFormat.short($0))" } ?? (event.isEstimate ? "varies" : nil),
-                           cents: event.amountCents)
+                VStack(alignment: .leading, spacing: 2) {
+                    LedgerLine(label: event.name,
+                               note: event.expectedDate.map { "expected \(CashFlowFormat.short($0))" } ?? (event.isEstimate && event.detail == nil ? "varies" : nil),
+                               cents: event.amountCents)
+                    if let detail = event.detail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(Ink.secondary)
+                    }
+                }
             }
             if day.everydayCents > 0 {
                 LedgerLine(label: "Everyday spending", note: "estimate", cents: -day.everydayCents)

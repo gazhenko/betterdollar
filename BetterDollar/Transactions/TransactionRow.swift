@@ -42,7 +42,9 @@ struct TransactionRow: View {
         case .new: parts.append("Not assigned")
         case .deleted: parts.append("Deleted")
         case .tracked:
-            let names = (transaction.allocations ?? []).compactMap { $0.item?.name }
+            // Largest part first; the store doesn't keep the order they were added in.
+            let names = (transaction.allocations ?? []).sorted { ($0.amountCents, $0.item?.name ?? "") > ($1.amountCents, $1.item?.name ?? "") }
+                .compactMap { $0.item?.name }
             parts.append(names.count > 1 ? "Split: " + names.joined(separator: ", ") : names.first ?? "Assigned")
         }
         if let account = transaction.account { parts.append(account.displayName) }

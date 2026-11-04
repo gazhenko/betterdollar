@@ -173,6 +173,10 @@ private struct RegisterDay: View {
                                 Text("Expected \(CashFlowFormat.short(expected)), not seen yet")
                                     .font(.caption)
                                     .foregroundStyle(Ink.secondary)
+                            } else if let detail = event.detail {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(Ink.secondary)
                             } else if event.isEstimate {
                                 Text("Amount varies")
                                     .font(.caption)

@@ -56,7 +56,7 @@ struct CashFlowSection: View {
             }
         }
         .sheet(item: $reviewing) { focus in
-            CashFlowReviewView(focus: focus, patterns: snapshot.patterns, usualCardPaymentDay: snapshot.usualCardPaymentDay)
+            CashFlowReviewView(focus: focus, patterns: snapshot.patterns, cardInfo: snapshot.cards)
         }
     }
 
@@ -95,6 +95,22 @@ struct CashFlowSection: View {
                     .font(.subheadline.weight(.semibold))
             }
         }
+        ForEach(snapshot.cardsOnUsualDay) { card in
+            PromptCard(systemImage: "creditcard", text: usualDayText(card)) {
+                HStack(spacing: 20) {
+                    Button("Looks right") { confirmUsualDay(card) }
+                        .accessibilityIdentifier("card-looks-right")
+                    Button("Change it") { reviewing = .cards }
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+        }
+        if !snapshot.missingIncome.isEmpty {
+            PromptCard(systemImage: "banknote", text: missingIncomeText(snapshot.missingIncome)) {
+                Button("Add a paycheck") { reviewing = .addPaycheck }
+                    .font(.subheadline.weight(.semibold))
+            }
+        }
         if snapshot.unreviewedCount > 0 {
             PromptCard(systemImage: "sparkle.magnifyingglass", text: foundText(snapshot)) {
                 Button("Review them") { reviewing = .all }
@@ -107,6 +123,25 @@ struct CashFlowSection: View {
                     .font(.subheadline.weight(.semibold))
             }
         }
+    }
+
+    private func missingIncomeText(_ income: [CashFlowPlanner.MissingIncome]) -> String {
+        let total = Money.format(income.reduce(0) { $0 + $1.cents })
+        let names = income.map(\.name).formatted(.list(type: .and))
+        return "Your budget plans \(total) of income this forecast doesn't count: \(names). Add \(income.count == 1 ? "it" : "them") with the day \(income.count == 1 ? "it arrives" : "they arrive") so the forecast includes \(income.count == 1 ? "it" : "them")."
+    }
+
+    private func usualDayText(_ card: CashFlowPlanner.Card) -> String {
+        guard let next = card.payments.first else {
+            return "\(card.name) is paid around the \(ordinal(card.habit?.day ?? 1)) in this forecast, when checking usually pays it."
+        }
+        return "\(card.name) is paid \(Money.format(-next.amountCents)) on \(CashFlowFormat.short(next.date)) in this forecast, around when checking usually pays it."
+    }
+
+    /// Keeps the usual day as the card's due day.
+    private func confirmUsualDay(_ card: CashFlowPlanner.Card) {
+        guard let day = card.habit?.day, let account = accounts.first(where: { $0.uuid == card.id }) else { return }
+        withAnimation(.snappy) { account.paymentDueDay = day }
     }
 
     private func foundText(_ snapshot: CashFlowPlanner.Snapshot) -> String {
@@ -273,7 +308,7 @@ struct HowCashFlowWorks: View {
                 Text("It starts from your checking balance and walks forward one day at a time.")
                 Text("Paychecks and bills come from your checking history: anything that repeats every week, every two weeks, twice a month or monthly. Turn any of them off, change an amount, or add your own under Paychecks and bills.")
                 Text("Budget items with a due day are paid on that day. The rest of each budget item is spread evenly over the month as everyday spending. Funds stay in checking until you spend them, so they aren't subtracted.")
-                Text("A credit card is paid on the due date you set: its full balance once, or a set amount every month. Card spending after that counts as everyday spending.")
+                Text("A credit card is paid on the due day you set, or the day checking usually pays it. It pays what you owe as the statement balance, the full balance, the minimum, a set amount or what you usually pay. Spending in the budget groups you pay with a card builds up on the card and leaves checking with its payment; other card spending counts as everyday spending.")
                 Text("Payments a few days late still count, on today.")
             }
             .font(.subheadline)
