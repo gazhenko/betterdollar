@@ -375,14 +375,15 @@ import SwiftData
         let monthDays: [Int] = switch flow.cadence {
         case .monthly: [day]
         case .semimonthly: [day, day > 15 ? day - 15 : day + 15].sorted()
-        case .weekly, .biweekly: []
+        case .once, .weekly, .biweekly: []
         }
-        // An added bill keeps going after its first date passes.
+        // An added bill keeps going after its first date passes; a one-time one is over once it's past the grace days.
         var date = calendar.startOfDay(for: next)
         let cutoff = calendar.date(byAdding: .day, value: -CashFlowForecast.graceDays, to: today) ?? today
         while date < cutoff {
             date = CashFlowSchedule.following(date, cadence: flow.cadence, monthDays: monthDays, calendar: calendar)
         }
+        guard date != .distantFuture else { return nil }
         return CashFlowSchedule(id: "manual:\(flow.uuid)", name: flow.name.isEmpty ? (flow.isIncome ? "Paycheck" : "Bill") : flow.name,
                                 isIncome: flow.isIncome, amountCents: flow.amountCents, cadence: flow.cadence, nextDate: date,
                                 monthDays: monthDays, coversSeriesID: flow.coversSeriesID)

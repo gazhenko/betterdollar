@@ -91,7 +91,7 @@ struct CashFlowReviewView: View {
             ForEach(added) { flow in
                 Button { editing = .existing(flow) } label: {
                     FlowRow(name: flow.name.nonEmpty ?? (income ? "Paycheck" : "Bill"),
-                            detail: "Added by you, \(flow.cadence.title.lowercased())\(flow.nextDate.map { ", from \(CashFlowFormat.short($0))" } ?? "")",
+                            detail: addedDetail(flow),
                             cents: flow.amountCents, isOff: flow.isIgnored)
                 }
                 .tint(Ink.text)
@@ -113,6 +113,14 @@ struct CashFlowReviewView: View {
     }
 
     private func decision(_ pattern: RecurringPattern) -> RecurringFlow? { flows.first { $0.key == pattern.id } }
+
+    private func addedDetail(_ flow: RecurringFlow) -> String {
+        let date = flow.nextDate.map(CashFlowFormat.short)
+        guard flow.cadence == .once else {
+            return "Added by you, \(flow.cadence.title.lowercased())\(date.map { ", from \($0)" } ?? "")"
+        }
+        return "Added by you, just once\(date.map { ", on \($0)" } ?? "")"
+    }
 
     private func rowDetail(_ pattern: RecurringPattern) -> String {
         if decision(pattern)?.isIgnored == true { return "Turned off" }
@@ -406,7 +414,8 @@ private struct FlowEditor: View {
                     Picker("How often", selection: $cadence) {
                         ForEach(Cadence.allCases) { Text($0.title).tag($0) }
                     }
-                    DatePicker(isIncome ? "Next payday" : "Next due", selection: $nextDate, displayedComponents: .date)
+                    DatePicker(cadence == .once ? (isIncome ? "Payday" : "Due") : (isIncome ? "Next payday" : "Next due"),
+                               selection: $nextDate, displayedComponents: .date)
                 }
                 if !isIncome {
                     Section {

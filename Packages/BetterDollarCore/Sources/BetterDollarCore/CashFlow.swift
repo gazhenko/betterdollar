@@ -6,14 +6,15 @@ import Foundation
 
 // MARK: - Schedules
 
-/// How often a paycheck or bill repeats.
+/// How often a paycheck or bill repeats. A one-time payment is added by hand; history never finds one.
 public enum Cadence: String, Codable, Sendable, CaseIterable, Identifiable {
-    case weekly, biweekly, semimonthly, monthly
+    case once, weekly, biweekly, semimonthly, monthly
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
+        case .once: "Just once"
         case .weekly: "Every week"
         case .biweekly: "Every 2 weeks"
         case .semimonthly: "Twice a month"
@@ -24,6 +25,7 @@ public enum Cadence: String, Codable, Sendable, CaseIterable, Identifiable {
     /// Roughly how many days apart occurrences are.
     var interval: Int {
         switch self {
+        case .once: 0
         case .weekly: 7
         case .biweekly: 14
         case .semimonthly: 15
@@ -76,6 +78,8 @@ public struct CashFlowSchedule: Sendable, Hashable, Identifiable {
     public static func following(_ date: Date, cadence: Cadence, monthDays: [Int], calendar: Calendar = .current) -> Date {
         let day = calendar.startOfDay(for: date)
         switch cadence {
+        case .once:
+            return .distantFuture
         case .weekly:
             return calendar.date(byAdding: .day, value: 7, to: day) ?? day
         case .biweekly:
@@ -159,7 +163,7 @@ public struct RecurringPattern: Sendable, Hashable, Identifiable {
     /// due day a few weeks after the last payment.
     public func nextDate(calendar: Calendar = .current) -> Date {
         switch cadence {
-        case .weekly, .biweekly:
+        case .once, .weekly, .biweekly:
             return CashFlowSchedule.following(lastDate, cadence: cadence, monthDays: monthDays, calendar: calendar)
         case .monthly, .semimonthly:
             let earliest = calendar.date(byAdding: .day, value: cadence == .monthly ? 20 : 8, to: lastDate) ?? lastDate

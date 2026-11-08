@@ -526,6 +526,30 @@ import Testing
         #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 200_00 / 30 + 1)
     }
 
+    @Test func oneTimePaychecksCountOnce() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 1_000_00
+        context.insert(checking)
+        for (name, date, cents) in [("Bonus", day(11, 20), 500_00), ("Tax refund", day(10, 10), 300_00), ("Gift", day(10, 28), 100_00)] {
+            let flow = RecurringFlow(name: name, isIncome: true)
+            flow.amountCents = cents
+            flow.cadence = .once
+            flow.nextDate = date
+            context.insert(flow)
+        }
+        try context.save()
+
+        let events = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar).forecast.events
+        #expect(events.filter { $0.name == "Bonus" }.map(\.date) == [day(11, 20)])
+        // Long past is over; a few days late still counts, today.
+        #expect(!events.contains { $0.name == "Tax refund" })
+        let gift = try #require(events.first { $0.name == "Gift" })
+        #expect(gift.date == today && gift.expectedDate == day(10, 28))
+    }
+
     @Test func sampleHouseholdShowsItsPaydaysAndCard() throws {
         let container = try BetterDollarSchema.container(inMemory: true)
         DemoData.seed(into: container.mainContext)
