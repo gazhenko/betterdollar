@@ -29,7 +29,7 @@ To connect:
    - Start with **Sandbox**. Its test banks accept username `user_good` and password `pass_good`.
    - Switch to **Production** for your real accounts.
 3. Tap **Connect a bank**. Linking opens in a private browser sheet using [Plaid Hosted Link](https://plaid.com/docs/link/hosted-link/), so OAuth banks work without a universal link or a server.
-4. New transactions land in the tray. Pull to refresh on Transactions to sync again.
+4. New transactions land in the tray. Banks are checked whenever the app opens or comes back to the front (at most every five minutes); pull to refresh on Transactions to check again now.
    - Syncing uses `/transactions/sync` with a stored cursor.
    - When a pending charge posts, it keeps the assignment you gave it.
 

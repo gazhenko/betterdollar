@@ -6,6 +6,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appLock") private var appLockEnabled = false
     @State private var isUnlocked = false
@@ -32,9 +33,16 @@ struct RootView: View {
                 isUnlocked = false
                 CoachEngineFactory.unloadAll()
             }
-            if phase == .active && appLockEnabled && !isUnlocked { unlock() }
+            if phase == .active {
+                if appLockEnabled && !isUnlocked { unlock() }
+                Task { await app.bank.syncIfStale(context: context) }
+            }
         }
-        .task { if appLockEnabled { unlock() } }
+        .task {
+            if appLockEnabled { unlock() }
+            // New bank activity shows up without a pull to refresh. Opening the app also counts as coming to the front.
+            await app.bank.syncIfStale(context: context)
+        }
     }
 
     private func unlock() {

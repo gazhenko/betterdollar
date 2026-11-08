@@ -138,6 +138,18 @@ import SwiftUI
 
     // MARK: Syncing
 
+    /// Banks are checked each time the app comes to the front, but not more often than this.
+    /// Pulling to refresh always checks right away.
+    static let automaticSyncGap: TimeInterval = 5 * 60
+    private var lastAutomaticSync: Date?
+
+    /// Checks every bank when the app opens or comes back to the front, unless it just did.
+    func syncIfStale(context: ModelContext, now: Date = Date()) async {
+        guard isConfigured, now.timeIntervalSince(lastAutomaticSync ?? .distantPast) >= Self.automaticSyncGap else { return }
+        lastAutomaticSync = now
+        await syncAll(context: context)
+    }
+
     func syncAll(context: ModelContext) async {
         let banks = (try? context.fetch(FetchDescriptor<BankLink>())) ?? []
         for bank in banks where !bank.needsReconnect { await sync(bank, context: context) }

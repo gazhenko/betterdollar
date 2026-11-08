@@ -37,6 +37,18 @@ struct TransactionsScreen: View {
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
 
+                if app.bank.isSyncingAny {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking your banks…")
+                            .font(.caption)
+                            .foregroundStyle(Ink.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 6, trailing: 0))
+                    .accessibilityIdentifier("bank-syncing")
+                }
                 if filtered.isEmpty {
                     emptyState
                         .listRowBackground(Color.clear)
@@ -114,7 +126,7 @@ struct TransactionsScreen: View {
                 Label("Nothing to assign", systemImage: "checkmark.seal")
             } description: {
                 Text(banks.isEmpty ? "Add a transaction, import a CSV from your bank, or connect a bank in Settings."
-                     : "Every transaction has a home. Pull down to check your banks for new ones.")
+                     : "Every transaction has a home. Your banks are checked whenever you open the app; pull down to check again now.")
             }
         case .tracked:
             ContentUnavailableView("No tracked transactions", systemImage: "tray",
