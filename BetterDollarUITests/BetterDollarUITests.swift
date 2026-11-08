@@ -209,6 +209,17 @@ import XCTest
         element(app, "cash-flow-review").tap()
         XCTAssertTrue(app.navigationBars["Paychecks and bills"].waitForExistence(timeout: 5))
         snap("cashflow-review")
+
+        // A one-time paycheck asks for its payday, not the next one.
+        app.buttons["Add a paycheck"].firstMatch.tap()
+        let often = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "How often")).firstMatch
+        XCTAssertTrue(often.waitForExistence(timeout: 5))
+        often.tap()
+        app.buttons["Just once"].tap()
+        XCTAssertTrue(app.staticTexts["Payday"].waitForExistence(timeout: 5))
+        snap("cashflow-paycheck-once")
+        app.navigationBars["Add a paycheck"].buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Paychecks and bills"].waitForExistence(timeout: 5))
         // Bills are in date order, so where rent sits depends on today's date.
         let rent = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Oak Street Apartments")).firstMatch
         for _ in 0..<4 where !(rent.exists && rent.isHittable) { app.swipeUp() }
@@ -257,6 +268,9 @@ import XCTest
         }
         let groceries = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Groceries")).firstMatch
         reveal(groceries, above: element(app, "tray-toggle").frame.minY, in: app)
+        // Everyday items mark how far through the month it is, so spending can be read against an even pace.
+        XCTAssertTrue((element(app, "item-Groceries").value as? String ?? "").contains("of the month gone"))
+        snap("budget-pace")
         groceries.tap()
         XCTAssertTrue(app.navigationBars["Food"].waitForExistence(timeout: 5))
         snap("item-detail")

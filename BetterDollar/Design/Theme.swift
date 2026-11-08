@@ -87,6 +87,9 @@ struct SpendRule: View {
     let progress: Double
     var overspent = false
     var tint: Color = Ink.primary
+    /// How far through the month it is. A tick marks where spending would be at an even pace,
+    /// so a fill past it is ahead of pace.
+    var pace: Double?
 
     var body: some View {
         GeometryReader { proxy in
@@ -94,6 +97,13 @@ struct SpendRule: View {
                 Capsule().fill(Ink.track)
                 Capsule().fill(overspent ? Ink.seal : tint)
                     .frame(width: max(overspent ? proxy.size.width : proxy.size.width * progress, progress > 0 ? 3 : 0))
+                if let pace {
+                    Capsule()
+                        .fill(Ink.text)
+                        .frame(width: 2, height: 11)
+                        .overlay { Capsule().strokeBorder(Ink.paper, lineWidth: 0.5) }
+                        .offset(x: min(max(0, proxy.size.width * pace - 1), proxy.size.width - 2))
+                }
             }
         }
         .frame(height: 3)

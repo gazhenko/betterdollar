@@ -162,7 +162,7 @@ struct BudgetItemRow: View {
         .overlay(alignment: .bottom) {
             if column != .planned {
                 SpendRule(progress: totals.progress, overspent: totals.isOverspent && !item.isIncomeItem,
-                          tint: item.isIncomeItem ? Ink.income : Ink.primary)
+                          tint: item.isIncomeItem ? Ink.income : Ink.primary, pace: pace)
                     .padding(.bottom, 2)
             }
         }
@@ -173,6 +173,7 @@ struct BudgetItemRow: View {
         }
         .sensoryFeedback(.success, trigger: droppedCount)
         .accessibilityElement(children: .contain)
+        .accessibilityValue(paceSummary ?? "")
         .accessibilityIdentifier("item-\(item.name)")
         .contextMenu {
             Button("Edit", systemImage: "pencil", action: onOpen)
@@ -184,6 +185,21 @@ struct BudgetItemRow: View {
             }
             Button("Delete", systemImage: "trash", role: .destructive) { BudgetPlanner.delete(item, in: context) }
         }
+    }
+
+    /// How far through this month it is, for everyday spending this month: not bills with a due day, funds or income.
+    private var pace: Double? {
+        guard !item.isIncomeItem, !item.isFund, item.dueDay == 0, item.plannedCents > 0,
+              let month = item.group?.month?.monthKey, month == MonthKey.current() else { return nil }
+        let calendar = Calendar.current
+        let days = calendar.range(of: .day, in: .month, for: Date())?.count ?? 30
+        return Double(calendar.component(.day, from: Date())) / Double(days)
+    }
+
+    private var paceSummary: String? {
+        guard let pace else { return nil }
+        let spent = Int((Double(totals.activityCents) / Double(max(1, totals.plannedCents)) * 100).rounded())
+        return "\(spent)% spent, \(Int((pace * 100).rounded()))% of the month gone"
     }
 
     private var figure: Int {
