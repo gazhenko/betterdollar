@@ -10,18 +10,10 @@ nonisolated enum ChartInk {
     static let income = Ink.dynamic(light: 0xBD7F12, dark: 0xC2821C)
 }
 
-/// Insights looks ahead (cash flow) or back (where the month's money went).
-enum InsightsPage: String, CaseIterable, Identifiable {
-    case cashFlow, spending
-
-    var id: String { rawValue }
-    var title: String { self == .cashFlow ? "Cash flow" : "Spending" }
-}
-
 struct InsightsScreen: View {
     @Environment(AppModel.self) private var app
     @Query(sort: \BudgetMonth.key) private var months: [BudgetMonth]
-    @AppStorage("insightsPage") private var page: InsightsPage = .cashFlow
+    @AppStorage("cashFlowTab") private var tab: CashFlowTab = .summary
 
     private var month: BudgetMonth? { months.first { $0.key == app.month.id } }
 
@@ -29,16 +21,11 @@ struct InsightsScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    Picker("Show", selection: $page) {
-                        ForEach(InsightsPage.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("insights-page")
-                    if page == .cashFlow {
-                        CashFlowSection()
-                    } else {
+                    // Insights looks ahead (cash flow) or back (where the month's money went).
+                    if tab == .spending {
                         spending
+                    } else {
+                        CashFlowSection()
                     }
                 }
                 .padding(.horizontal, 20)
@@ -51,7 +38,10 @@ struct InsightsScreen: View {
     }
 
     @ViewBuilder private var spending: some View {
-        MonthHeader()
+        VStack(alignment: .leading, spacing: 20) {
+            MonthHeader()
+            InsightsTabPicker()
+        }
         if let month {
             let funds = FundLedger(months: months)
             let totals = BudgetMath.totals(for: month)

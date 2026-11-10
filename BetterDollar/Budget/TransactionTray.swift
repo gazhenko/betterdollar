@@ -21,23 +21,24 @@ struct TransactionTray: View {
             Button {
                 withAnimation(.snappy) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 10) {
-                    Capsule().fill(Ink.rule).frame(width: 36, height: 5)
-                        .frame(maxWidth: .infinity)
-                        .overlay(alignment: .leading) {
-                            Text(title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(inMonth.isEmpty ? Ink.secondary : Ink.text)
-                        }
-                        .overlay(alignment: .trailing) {
-                            Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
-                                .font(.footnote.weight(.bold))
-                                .foregroundStyle(Ink.secondary)
-                        }
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(inMonth.isEmpty ? Ink.secondary : Ink.text)
+                    Spacer()
+                    if !inMonth.isEmpty {
+                        Text(isExpanded ? "Drag or tap to assign" : nextUp)
+                            .font(.caption)
+                            .foregroundStyle(Ink.secondary)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(Ink.secondary)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 10)
-                .padding(.bottom, isExpanded ? 6 : 12)
+                .padding(.top, 12)
+                .padding(.bottom, isExpanded ? 8 : 12)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -64,21 +65,17 @@ struct TransactionTray: View {
                                 TransactionSlip(transaction: transaction)
                                     .onTapGesture { onSelect(transaction) }
                                     .draggable(transaction.uuid.uuidString) {
-                                        TransactionSlip(transaction: transaction).frame(width: 150)
+                                        TransactionSlip(transaction: transaction).frame(width: 168)
                                     }
                                     .accessibilityAddTraits(.isButton)
                                     .accessibilityHint("Double-tap to assign. Or drag it onto a budget item.")
                             }
                         }
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 12)
+                        .padding(.bottom, 10)
                     }
                     .scrollIndicators(.hidden)
-                    .frame(height: 104)
-                    Text("Drag onto a budget item, or tap to choose.")
-                        .font(.caption2)
-                        .foregroundStyle(Ink.secondary)
-                        .padding(.bottom, 8)
+                    .frame(height: 74)
                 }
             }
         }
@@ -88,6 +85,12 @@ struct TransactionTray: View {
                 .shadow(color: Ink.primary.opacity(0.12), radius: 10, y: -2)
                 .ignoresSafeArea(edges: .bottom)
         }
+    }
+
+    /// The collapsed tray names the newest transaction, so there's something to act on without opening it.
+    private var nextUp: String {
+        guard let first = inMonth.first else { return "" }
+        return "\(first.merchant), \(Money.format(first.amountCents))"
     }
 
     private var title: String {
@@ -109,17 +112,22 @@ struct TransactionSlip: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Ink.text)
                 .lineLimit(1)
-            Text(transaction.date.formatted(.dateTime.month(.abbreviated).day()) + (transaction.isPending ? ", pending" : ""))
-                .font(.caption)
-                .foregroundStyle(Ink.secondary)
             Spacer(minLength: 0)
-            Text((transaction.isIncome ? "+" : "−") + Money.format(transaction.amountCents))
-                .font(Typeface.amount.weight(.semibold))
-                .foregroundStyle(transaction.isIncome ? Ink.income : Ink.text)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text((transaction.isIncome ? "+" : "−") + Money.format(transaction.amountCents))
+                    .font(Typeface.amount.weight(.semibold))
+                    .foregroundStyle(transaction.isIncome ? Ink.income : Ink.text)
+                    .layoutPriority(1)
+                Spacer(minLength: 0)
+                Text(transaction.date.formatted(.dateTime.month(.abbreviated).day()) + (transaction.isPending ? ", pending" : ""))
+                    .font(.caption)
+                    .foregroundStyle(Ink.secondary)
+                    .lineLimit(1)
+            }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: 150, height: 92, alignment: .leading)
+        .padding(.vertical, 9)
+        .frame(width: 168, height: 64, alignment: .leading)
         .background(Ink.paper, in: SlipShape())
         .overlay { SlipShape().stroke(Ink.rule, lineWidth: 1) }
         .contentShape(SlipShape())

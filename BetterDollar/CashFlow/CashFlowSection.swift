@@ -2,9 +2,9 @@ import BetterDollarCore
 import SwiftData
 import SwiftUI
 
-/// The cash flow tabs: the headline and what to do about it, then the forecast as a line or a calendar.
+/// The Insights views: cash flow as a headline, a line or a calendar (looking ahead), then where this month's money went.
 enum CashFlowTab: String, CaseIterable, Identifiable {
-    case summary, runway, calendar
+    case summary, runway, calendar, spending
 
     var id: String { rawValue }
     var title: String {
@@ -12,7 +12,21 @@ enum CashFlowTab: String, CaseIterable, Identifiable {
         case .summary: "Summary"
         case .runway: "Runway"
         case .calendar: "Calendar"
+        case .spending: "Spending"
         }
+    }
+}
+
+/// The one switcher on Insights, shown under whichever heading the current view has.
+struct InsightsTabPicker: View {
+    @AppStorage("cashFlowTab") private var tab: CashFlowTab = .summary
+
+    var body: some View {
+        Picker("View", selection: $tab) {
+            ForEach(CashFlowTab.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("cash-flow-tab")
     }
 }
 
@@ -35,11 +49,7 @@ struct CashFlowSection: View {
         let snapshot = CashFlowPlanner.snapshot(in: context, cushionCents: cushionCents, manualBalanceCents: manualBalanceCents)
         VStack(alignment: .leading, spacing: 20) {
             header(snapshot)
-            Picker("View", selection: $tab) {
-                ForEach(CashFlowTab.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("cash-flow-tab")
+            InsightsTabPicker()
 
             switch tab {
             case .summary:
@@ -53,6 +63,8 @@ struct CashFlowSection: View {
                 RunwayView(forecast: snapshot.forecast)
             case .calendar:
                 CashFlowCalendar(forecast: snapshot.forecast)
+            case .spending:
+                EmptyView()
             }
         }
         .sheet(item: $reviewing) { focus in

@@ -178,7 +178,6 @@ import XCTest
             attachment.lifetime = .keepAlways
             add(attachment)
         }
-        element(app, "insights-page").buttons["Cash flow"].tap()
         element(app, "cash-flow-tab").buttons["Summary"].tap()
         XCTAssertTrue(element(app, "cash-flow-plate").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "cash-flow-plate").label.contains("drops below $5,000"), element(app, "cash-flow-plate").label)

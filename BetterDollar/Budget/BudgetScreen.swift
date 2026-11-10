@@ -202,6 +202,10 @@ struct MonthProgress: View {
                 if let daysLeft {
                     Text(daysLeft == 1 ? "Last day" : "\(daysLeft) days left")
                         .foregroundStyle(Ink.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Ink.sheet.opacity(0.9), in: .capsule)
+                        .padding(.trailing, -8)
                 }
             }
             .font(.footnote.weight(.medium).monospacedDigit())
