@@ -180,14 +180,8 @@ struct CashFlowPlate: View {
         .padding(20)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            Guilloche(completion: clearShare(forecast), color: isShort ? Ink.seal : Ink.primary)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: clearShare(forecast))
-        }
-        .background(Ink.sheet, in: .rect(cornerRadius: 22))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22).strokeBorder((isShort ? Ink.seal : Ink.primary).opacity(0.35), lineWidth: 1)
-        }
+        .engravedPlate(completion: clearShare(forecast), color: isShort ? Ink.seal : Ink.primary,
+                       borderOpacity: 0.35, animates: !reduceMotion)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("cash-flow-plate")
     }

@@ -9,6 +9,7 @@ struct BetterDollarApp: App {
 
     init() {
         container = Self.makeContainer()
+        Typeface.styleNavigationBars()
     }
 
     var body: some Scene {

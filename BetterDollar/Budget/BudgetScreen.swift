@@ -33,7 +33,7 @@ struct BudgetScreen: View {
                         StartMonthView(month: app.month)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.bottom, 40)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -70,10 +70,17 @@ struct BudgetScreen: View {
         }
     }
 
+    private var daysLeft: Int? {
+        guard app.isViewingCurrentMonth else { return nil }
+        let calendar = Calendar.current
+        let days = calendar.range(of: .day, in: .month, for: Date())?.count ?? 30
+        return days - calendar.component(.day, from: Date()) + 1
+    }
+
     @ViewBuilder private func plan(for month: BudgetMonth) -> some View {
         let funds = FundLedger(months: months)
         let totals = BudgetMath.totals(for: month)
-        LeftToBudgetPlate(totals: totals)
+        LeftToBudgetPlate(totals: totals, daysLeft: daysLeft)
             .padding(.bottom, 18)
         Picker("Show", selection: $column) {
             ForEach(BudgetColumn.allCases) { Text($0.rawValue).tag($0) }
@@ -153,25 +160,53 @@ struct LeftToBudgetPlate: View {
                 .foregroundStyle(isOver ? Ink.seal : Ink.text)
                 .padding(.top, 6)
                 .fixedSize(horizontal: false, vertical: true)
+            if totals.plannedExpenseCents > 0 {
+                MonthProgress(totals: totals, daysLeft: daysLeft)
+                    .padding(.top, 12)
+            }
         }
         .padding(20)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            Guilloche(completion: completion, color: isOver ? Ink.seal : Ink.primary)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: completion)
-        }
-        .background(Ink.sheet, in: .rect(cornerRadius: 22))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22).strokeBorder(Ink.primary.opacity(totals.isZeroBased ? 0.55 : 0.18), lineWidth: totals.isZeroBased ? 1.5 : 1)
-        }
+        .engravedPlate(completion: completion, color: isOver ? Ink.seal : Ink.primary,
+                       borderOpacity: totals.isZeroBased ? 0.55 : 0.18, borderWidth: totals.isZeroBased ? 1.5 : 1,
+                       animates: !reduceMotion)
         .accessibilityElement(children: .combine)
     }
+
+    /// Days left in the month being shown, counting today. Nil for past and future months.
+    var daysLeft: Int?
 
     private var statusLine: String {
         if totals.plannedIncomeCents == 0 { return "Start with the income you expect this month." }
         if totals.isZeroBased { return "It's a zero-based budget. Every dollar has a job." }
         if isOver { return "You've planned \(Money.format(-totals.leftToBudgetCents)) more than you expect to make." }
         return "Give the rest of your income a job until this reaches zero."
+    }
+}
+
+/// Where the month stands at a glance: what's been spent against the plan, and how long is left.
+struct MonthProgress: View {
+    let totals: MonthTotals
+    let daysLeft: Int?
+
+    private var isOver: Bool { totals.spentCents > totals.plannedExpenseCents }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SpendRule(progress: min(1, Double(totals.spentCents) / Double(max(1, totals.plannedExpenseCents))), overspent: isOver)
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(Money.format(totals.spentCents, showsCents: false)) spent of \(Money.format(totals.plannedExpenseCents, showsCents: false))")
+                    .foregroundStyle(isOver ? Ink.seal : Ink.text)
+                Spacer()
+                if let daysLeft {
+                    Text(daysLeft == 1 ? "Last day" : "\(daysLeft) days left")
+                        .foregroundStyle(Ink.secondary)
+                }
+            }
+            .font(.footnote.weight(.medium).monospacedDigit())
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("month-progress")
     }
 }

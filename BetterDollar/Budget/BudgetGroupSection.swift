@@ -40,25 +40,32 @@ struct BudgetGroupSection: View {
                 .foregroundStyle(Ink.secondary)
                 .accessibilityLabel("\(group.name) options")
             }
-            .padding(.top, 26)
+            .padding(.top, 22)
             .padding(.bottom, 6)
-            DoubleRule(color: Ink.rule)
-                .padding(.bottom, 2)
+            .padding(.leading, 4)
 
-            ForEach(group.sortedItems) { item in
-                BudgetItemRow(item: item, column: column, totals: BudgetMath.totals(for: item, funds: funds),
-                              focusedItem: focusedItem, onOpen: { onOpen(item) })
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(group.sortedItems) { item in
+                    BudgetItemRow(item: item, column: column, totals: BudgetMath.totals(for: item, funds: funds),
+                                  focusedItem: focusedItem, onOpen: { onOpen(item) })
+                }
+                Button {
+                    draftName = ""
+                    isAddingItem = true
+                } label: {
+                    Label(group.isIncome ? "Add income" : "Add item", systemImage: "plus")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                }
+                .foregroundStyle(Ink.primary)
+                .accessibilityIdentifier("add-item-\(group.name)")
             }
-            Button {
-                draftName = ""
-                isAddingItem = true
-            } label: {
-                Label(group.isIncome ? "Add income" : "Add item", systemImage: "plus")
-                    .font(.subheadline.weight(.medium))
-                    .padding(.vertical, 10)
-            }
-            .foregroundStyle(Ink.primary)
-            .accessibilityIdentifier("add-item-\(group.name)")
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .background(Ink.sheet, in: .rect(cornerRadius: 18))
+            .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Ink.rule.opacity(0.6), lineWidth: 0.5) }
         }
         .alert("New \(group.isIncome ? "income" : "item") in \(group.name)", isPresented: $isAddingItem) {
             TextField("Name", text: $draftName)
@@ -149,7 +156,7 @@ struct BudgetItemRow: View {
                 AmountText(cents: figure, flagsNegative: column == .remaining && !item.isIncomeItem)
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 11)
         .padding(.horizontal, 10)
         .background {
             RoundedRectangle(cornerRadius: 12)

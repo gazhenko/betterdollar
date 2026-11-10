@@ -38,12 +38,39 @@ enum Typeface {
     static let groupTitle = Font.system(size: 19, weight: .semibold, design: .serif)
     static func figure(_ size: CGFloat) -> Font { .system(size: size, weight: .bold).width(.expanded) }
     static let amount = Font.system(size: 16, weight: .medium).monospacedDigit()
+    /// System navigation bars use the same serif as the screens that draw their own titles.
+    @MainActor static func styleNavigationBars() {
+        func serif(_ size: CGFloat) -> UIFont {
+            let base = UIFont.systemFont(ofSize: size, weight: .semibold)
+            return UIFont(descriptor: base.fontDescriptor.withDesign(.serif) ?? base.fontDescriptor, size: size)
+        }
+        let bar = UINavigationBar.appearance()
+        bar.largeTitleTextAttributes = [.font: serif(34)]
+        bar.titleTextAttributes = [.font: serif(17)]
+    }
     static let amountSmall = Font.system(size: 13, weight: .regular).monospacedDigit()
 }
 
 extension View {
     func paperBackground() -> some View {
         background(Ink.paper.ignoresSafeArea())
+    }
+
+    /// The engraved card behind a headline figure. The engraving is clipped to the card and thins out
+    /// toward the leading edge so the figure and its caption stay easy to read.
+    func engravedPlate(completion: Double, color: Color = Ink.primary, borderOpacity: Double = 0.18,
+                       borderWidth: CGFloat = 1, animates: Bool = true) -> some View {
+        background {
+            Guilloche(completion: completion, color: color)
+                .mask(LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
+                                             .init(color: .black.opacity(0.45), location: 0.45),
+                                             .init(color: .black, location: 0.8)],
+                                     startPoint: .leading, endPoint: .trailing))
+                .animation(animates ? .easeInOut(duration: 1.1) : nil, value: completion)
+        }
+        .background(Ink.sheet)
+        .clipShape(.rect(cornerRadius: 22))
+        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(color.opacity(borderOpacity), lineWidth: borderWidth) }
     }
 
     /// Screens without a navigation bar: keeps scrolled content from showing through the status bar.
