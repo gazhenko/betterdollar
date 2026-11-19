@@ -6,18 +6,18 @@ import UIKit
 /// Text is the black of a note's face. The one solid color is the green of its back, kept for the plate and for actions.
 /// Red is the overprinted Treasury seal, reserved for overspending.
 nonisolated enum Ink {
-    static let paper = dynamic(light: 0xE9ECE0, dark: 0x0D1A15)
+    static let paper = dynamic(light: 0xE9ECE0, dark: 0x060B08)
     /// Loose paper lying on the page: slips, notices, sheets and form rows.
-    static let sheet = dynamic(light: 0xF6F7F1, dark: 0x13231C)
+    static let sheet = dynamic(light: 0xF6F7F1, dark: 0x0D1410)
     static let primary = dynamic(light: 0x1F4D3A, dark: 0x9CC8AE)
     static let text = dynamic(light: 0x16201B, dark: 0xE4ECE7)
     static let secondary = dynamic(light: 0x55615A, dark: 0x93A39A)
-    static let rule = dynamic(light: 0xC6CCBD, dark: 0x274036)
-    static let track = dynamic(light: 0xD8DCCF, dark: 0x1D3029)
+    static let rule = dynamic(light: 0xC6CCBD, dark: 0x1F2B25)
+    static let track = dynamic(light: 0xD8DCCF, dark: 0x161F1A)
     static let seal = dynamic(light: 0xB3362C, dark: 0xF07A6E)
     static let income = dynamic(light: 0x2E6B4A, dark: 0x8FD3A6)
     /// Text drawn on top of `primary`.
-    static let onPrimary = dynamic(light: 0xEDF0E4, dark: 0x0D1A15)
+    static let onPrimary = dynamic(light: 0xEDF0E4, dark: 0x060B08)
     /// The greenback: the solid field of an engraved plate. The same printing in both appearances.
     static let plate = dynamic(light: 0x1F4D3A, dark: 0x1A4231)
     /// Stock showing through the plate: its figure, copy and line work.

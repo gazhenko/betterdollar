@@ -4,7 +4,7 @@ import SwiftData
 import SwiftUI
 
 /// Validated two-series chart colors (OKLCH band, chroma floor, CVD and normal-vision separation)
-/// for light (#F2F4EF) and dark (#0D1A15) paper.
+/// for light (#F2F4EF) and dark (#060B08) paper.
 nonisolated enum ChartInk {
     static let spending = Ink.dynamic(light: 0x12804F, dark: 0x287A4E)
     static let income = Ink.dynamic(light: 0xBD7F12, dark: 0xC2821C)
