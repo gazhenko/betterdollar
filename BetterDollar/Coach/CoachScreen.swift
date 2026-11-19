@@ -47,7 +47,7 @@ struct CoachScreen: View {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, Layout.margin)
                     .padding(.bottom, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -66,9 +66,7 @@ struct CoachScreen: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Coach").font(Typeface.title(34)).foregroundStyle(Ink.text)
+        ScreenHeader(title: "Coach") {
                 Menu {
                     Picker("Model", selection: $engineID) {
                         ForEach(CoachEngineFactory.availableEngineIDs(store: store), id: \.self) { id in
@@ -86,25 +84,24 @@ struct CoachScreen: View {
                 }
                 .accessibilityLabel("Model: \(name(for: resolvedEngineID))")
                 .accessibilityIdentifier("coach-model")
-            }
-            Spacer()
+        } actions: {
             if !messages.isEmpty {
-                Button("New chat", systemImage: "square.and.pencil") { clear() }
-                    .labelStyle(.iconOnly)
-                    .font(.title3)
-                    .foregroundStyle(Ink.primary)
+                Button { clear() } label: { HeaderButtonLabel(systemImage: "square.and.pencil") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("New chat")
                     .disabled(streaming != nil)
             }
         }
-        .padding(.top, 8)
     }
 
     private var starters: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Ask about your budget, your funds or where the money went. Answers are written on this iPhone from your own numbers; nothing is sent to a cloud AI.")
                 .font(.callout)
                 .foregroundStyle(Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 14)
+            Rectangle().fill(Ink.text).frame(height: 1.5)
             ForEach(CoachPrompts.starters, id: \.self) { starter in
                 Button {
                     send(starter)
@@ -112,13 +109,13 @@ struct CoachScreen: View {
                     HStack {
                         Text(starter).multilineTextAlignment(.leading)
                         Spacer()
-                        Image(systemName: "arrow.up.circle").foregroundStyle(Ink.primary)
+                        Image(systemName: "arrow.up").font(.footnote.weight(.semibold)).foregroundStyle(Ink.primary)
                     }
                     .font(.body)
                     .foregroundStyle(Ink.text)
-                    .padding(14)
-                    .background(Ink.sheet, in: .rect(cornerRadius: 14))
-                    .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(Ink.rule) }
+                    .padding(.vertical, 14)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Ink.rule).frame(height: 0.75) }
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .disabled(engine?.availability != .ready)
@@ -142,7 +139,7 @@ struct CoachScreen: View {
         }
         .font(.callout)
         .padding(16)
-        .background(Ink.sheet, in: .rect(cornerRadius: 16))
+        .card()
     }
 
     private var composer: some View {
@@ -152,8 +149,7 @@ struct CoachScreen: View {
                 .focused($composerFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Ink.sheet, in: .rect(cornerRadius: 20))
-                .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(Ink.rule) }
+                .card(radius: 20)
                 .submitLabel(.send)
                 .onSubmit { send(draft) }
                 .accessibilityIdentifier("coach-input")
@@ -171,7 +167,7 @@ struct CoachScreen: View {
                     .accessibilityIdentifier("coach-send")
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Layout.margin)
         .padding(.vertical, 8)
         .background(Ink.paper.opacity(0.96))
     }

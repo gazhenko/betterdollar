@@ -27,7 +27,7 @@ struct TransactionEditor: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            LedgerForm {
                 Section {
                     Picker("Type", selection: $isIncome) {
                         Text("Expense").tag(false)
@@ -93,8 +93,6 @@ struct TransactionEditor: View {
                     }
                 }
             }
-            .scrollContentBackground(.hidden)
-            .paperBackground()
             .navigationTitle(transaction == nil ? "New transaction" : "Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

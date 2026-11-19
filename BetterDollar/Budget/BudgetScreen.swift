@@ -33,7 +33,7 @@ struct BudgetScreen: View {
                         StartMonthView(month: app.month)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Layout.margin)
                 .padding(.bottom, 40)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -81,12 +81,8 @@ struct BudgetScreen: View {
         let funds = FundLedger(months: months)
         let totals = BudgetMath.totals(for: month)
         LeftToBudgetPlate(totals: totals, daysLeft: daysLeft)
-            .padding(.bottom, 18)
-        Picker("Show", selection: $column) {
-            ForEach(BudgetColumn.allCases) { Text($0.rawValue).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .padding(.bottom, 8)
+            .padding(.bottom, 10)
+        LedgerTabs(selection: $column, options: BudgetColumn.allCases.map { ($0, $0.rawValue) })
         ForEach(month.sortedGroups) { group in
             BudgetGroupSection(group: group, column: column, funds: funds, focusedItem: $focusedItem,
                                onOpen: { editingItem = $0 })
@@ -103,35 +99,28 @@ struct MonthHeader: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(app.month.monthName)
-                    .font(Typeface.title(34))
-                    .foregroundStyle(Ink.text)
-                Text(String(app.month.year))
-                    .font(.subheadline.weight(.medium).monospacedDigit())
-                    .foregroundStyle(Ink.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isHeader)
-            Spacer()
+        ScreenHeader(title: app.month.monthName) {
+            Text(String(app.month.year)).monospacedDigit()
+        } actions: {
             if !app.isViewingCurrentMonth {
                 Button("Today") { withAnimation(.snappy) { app.month = .current() } }
                     .font(.subheadline.weight(.semibold))
-                    .padding(.trailing, 6)
+                    .foregroundStyle(Ink.primary)
+                    .padding(.horizontal, 14)
+                    .frame(height: 38)
+                    .background(Ink.sheet, in: .capsule)
+                    .overlay { Capsule().strokeBorder(Ink.rule, lineWidth: 0.75) }
             }
             Button { withAnimation(.snappy) { app.month = app.month.previous } } label: {
-                Image(systemName: "chevron.left").frame(width: 40, height: 40)
+                HeaderButtonLabel(systemImage: "chevron.left")
             }
             .accessibilityLabel("Previous month")
             Button { withAnimation(.snappy) { app.month = app.month.next } } label: {
-                Image(systemName: "chevron.right").frame(width: 40, height: 40)
+                HeaderButtonLabel(systemImage: "chevron.right")
             }
             .accessibilityLabel("Next month")
         }
-        .font(.title3.weight(.semibold))
-        .foregroundStyle(Ink.primary)
-        .padding(.top, 8)
+        .buttonStyle(.plain)
     }
 }
 
@@ -146,31 +135,31 @@ struct LeftToBudgetPlate: View {
         return min(1, max(0.04, Double(totals.plannedExpenseCents) / Double(totals.plannedIncomeCents)))
     }
     private var isOver: Bool { totals.leftToBudgetCents < 0 }
+    /// Planned more than you make, or spent more than you planned: the greenback is reprinted as a red-seal note.
+    private var ink: PlateInk { PlateInk(alarm: isOver || totals.spentCents > totals.plannedExpenseCents) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AmountText(cents: abs(totals.leftToBudgetCents), font: Typeface.figure(40),
-                       color: isOver ? Ink.seal : Ink.primary)
+        let figure = isOver ? Ink.seal : ink.figure
+        VStack(alignment: .leading, spacing: 4) {
+            MoneyFigure(cents: abs(totals.leftToBudgetCents), color: figure, shade: ink.shade(for: figure))
                 .accessibilityIdentifier("leftToBudget")
             Text(isOver ? "over budget" : "left to budget")
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(Ink.secondary)
+                .foregroundStyle(ink.secondary)
             Text(statusLine)
                 .font(.callout)
-                .foregroundStyle(isOver ? Ink.seal : Ink.text)
-                .padding(.top, 6)
+                .foregroundStyle(ink.text)
+                .padding(.top, 12)
                 .fixedSize(horizontal: false, vertical: true)
             if totals.plannedExpenseCents > 0 {
-                MonthProgress(totals: totals, daysLeft: daysLeft)
-                    .padding(.top, 12)
+                MonthProgress(totals: totals, daysLeft: daysLeft, ink: ink)
+                    .padding(.top, 14)
             }
         }
-        .padding(20)
-        .padding(.bottom, 10)
+        .padding(22)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .engravedPlate(completion: completion, color: isOver ? Ink.seal : Ink.primary,
-                       borderOpacity: totals.isZeroBased ? 0.55 : 0.18, borderWidth: totals.isZeroBased ? 1.5 : 1,
-                       animates: !reduceMotion)
+        .engravedPlate(completion: completion, ink: ink, framed: totals.isZeroBased, animates: !reduceMotion)
         .accessibilityElement(children: .combine)
     }
 
@@ -189,23 +178,21 @@ struct LeftToBudgetPlate: View {
 struct MonthProgress: View {
     let totals: MonthTotals
     let daysLeft: Int?
+    var ink = PlateInk(alarm: false)
 
     private var isOver: Bool { totals.spentCents > totals.plannedExpenseCents }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SpendRule(progress: min(1, Double(totals.spentCents) / Double(max(1, totals.plannedExpenseCents))), overspent: isOver)
+            SpendRule(progress: min(1, Double(totals.spentCents) / Double(max(1, totals.plannedExpenseCents))), overspent: isOver,
+                      tint: ink.text, track: ink.track)
             HStack(alignment: .firstTextBaseline) {
                 Text("\(Money.format(totals.spentCents, showsCents: false)) spent of \(Money.format(totals.plannedExpenseCents, showsCents: false))")
-                    .foregroundStyle(isOver ? Ink.seal : Ink.text)
+                    .foregroundStyle(isOver ? Ink.seal : ink.text)
                 Spacer()
                 if let daysLeft {
                     Text(daysLeft == 1 ? "Last day" : "\(daysLeft) days left")
-                        .foregroundStyle(Ink.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Ink.sheet.opacity(0.9), in: .capsule)
-                        .padding(.trailing, -8)
+                        .foregroundStyle(ink.secondary)
                 }
             }
             .font(.footnote.weight(.medium).monospacedDigit())

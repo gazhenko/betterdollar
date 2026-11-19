@@ -11,7 +11,7 @@ struct CoachModelsView: View {
     @State private var apple = AppleCoachEngine()
 
     var body: some View {
-        Form {
+        LedgerForm {
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
@@ -26,7 +26,7 @@ struct CoachModelsView: View {
                 .contentShape(.rect)
                 .onTapGesture { engineID = AppleCoachEngine.engineID }
             } header: {
-                Text("Built in")
+                LedgerHeading("Built in")
             } footer: {
                 Text("Apple's on-device model needs an iPhone with Apple Intelligence turned on. It looks up details in your budget as it answers.")
             }
@@ -38,13 +38,11 @@ struct CoachModelsView: View {
                     }
                 }
             } header: {
-                Text("Download a model")
+                LedgerHeading("Download a model")
             } footer: {
                 Text("Models download once from Hugging Face at a fixed version, then run fully offline. Keep BetterDollar open while a model downloads; if it stops, tap Download again to resume.")
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle("On-device AI")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

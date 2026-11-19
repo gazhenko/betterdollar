@@ -25,7 +25,7 @@ struct CashFlowReviewView: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                Form {
+                LedgerForm {
                     flowSection(income: true)
                     flowSection(income: false)
                     if !cards.isEmpty {
@@ -41,7 +41,7 @@ struct CashFlowReviewView: View {
                                 }
                             }
                         } header: {
-                            Text("Credit cards")
+                            LedgerHeading("Credit cards")
                         } footer: {
                             Text(cardFooter)
                         }
@@ -53,8 +53,6 @@ struct CashFlowReviewView: View {
                         Text("Days when checking would end lower than this are flagged. Leave it empty to flag only days below zero.")
                     }
                 }
-                .scrollContentBackground(.hidden)
-                .paperBackground()
                 .onAppear {
                     if focus == .cards { proxy.scrollTo(Focus.cards, anchor: .top) }
                     if focus == .addPaycheck { editing = .new(isIncome: true) }
@@ -101,7 +99,7 @@ struct CashFlowReviewView: View {
             }
             Button(income ? "Add a paycheck" : "Add a bill", systemImage: "plus") { editing = .new(isIncome: income) }
         } header: {
-            Text(income ? "Paychecks" : "Bills")
+            LedgerHeading(income ? "Paychecks" : "Bills")
         } footer: {
             if found.isEmpty {
                 Text(income ? "Nothing regular found in checking deposits yet." : "No repeating charges found in checking yet.")
@@ -180,7 +178,7 @@ private struct PatternDetailView: View {
     }
 
     var body: some View {
-        Form {
+        LedgerForm {
             Section {
                 Toggle("Count in the forecast", isOn: Binding(get: { !(saved?.isIgnored ?? false) }, set: { choice.isIgnored = !$0 }))
             }
@@ -201,7 +199,7 @@ private struct PatternDetailView: View {
                     Text("Linking it to a budget item keeps that item from being counted a second time.")
                 }
             }
-            Section("Seen in checking") {
+            Section(ledger: "Seen in checking") {
                 LabeledContent(pattern.cadence.title, value: "\(pattern.dates.count) times")
                 Text(pattern.dates.suffix(6).map(CashFlowFormat.short).formatted(.list(type: .and)))
                     .font(.subheadline)
@@ -209,8 +207,6 @@ private struct PatternDetailView: View {
                 LabeledContent("Next expected", value: CashFlowFormat.weekday(pattern.nextDate()))
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle(saved?.name.nonEmpty ?? pattern.name)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -229,7 +225,7 @@ private struct CardPaymentDetail: View {
         let info = CashFlowPlanner.snapshot(in: context, cushionCents: cushionCents, manualBalanceCents: manualBalanceCents)
             .cards.first { $0.id == account.uuid }
         let mode = account.paymentMode
-        Form {
+        LedgerForm {
             Section {
                 Picker("Pay", selection: $account.paymentMode) {
                     ForEach(CardPaymentMode.allCases) { Text($0.title).tag($0) }
@@ -269,7 +265,7 @@ private struct CardPaymentDetail: View {
                     Toggle(name, isOn: Binding(get: { account.cardGroupNames.contains(name) }, set: { setGroup(name, paidByCard: $0) }))
                 }
             } header: {
-                Text("Paid with this card")
+                LedgerHeading("Paid with this card")
             } footer: {
                 Text(groupsFooter(mode, info))
             }
@@ -283,7 +279,7 @@ private struct CardPaymentDetail: View {
                 } footer: {
                     Text("Linking it to the budget item for this card keeps that item from being counted a second time.")
                 }
-                Section("In the forecast") {
+                Section(ledger: "In the forecast") {
                     if let payments = info?.payments, !payments.isEmpty {
                         ForEach(payments) { payment in
                             VStack(alignment: .leading, spacing: 2) {
@@ -304,14 +300,12 @@ private struct CardPaymentDetail: View {
                     LabeledContent("Usually around", value: "the \(ordinal(habit.day))")
                     LabeledContent("A typical month", value: Money.format(habit.monthlyCents))
                 } header: {
-                    Text("Paid from checking before")
+                    LedgerHeading("Paid from checking before")
                 } footer: {
                     Text("From payments that left checking and showed up on this card.")
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle(account.displayName)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -407,7 +401,7 @@ private struct FlowEditor: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            LedgerForm {
                 Section {
                     TextField(isIncome ? "Employer" : "Name", text: $name)
                     MoneyField(title: "Amount", cents: $amountCents)

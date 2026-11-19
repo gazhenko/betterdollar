@@ -36,7 +36,7 @@ struct TransactionTray: View {
                         .font(.footnote.weight(.bold))
                         .foregroundStyle(Ink.secondary)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, Layout.margin + 4)
                 .padding(.top, 12)
                 .padding(.bottom, isExpanded ? 8 : 12)
                 .contentShape(.rect)
@@ -71,7 +71,7 @@ struct TransactionTray: View {
                                     .accessibilityHint("Double-tap to assign. Or drag it onto a budget item.")
                             }
                         }
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, Layout.margin)
                         .padding(.bottom, 10)
                     }
                     .scrollIndicators(.hidden)
@@ -80,9 +80,10 @@ struct TransactionTray: View {
             }
         }
         .background {
-            UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22)
+            UnevenRoundedRectangle(topLeadingRadius: Layout.plateRadius, topTrailingRadius: Layout.plateRadius)
                 .fill(Ink.sheet)
-                .shadow(color: Ink.primary.opacity(0.12), radius: 10, y: -2)
+                .overlay { UnevenRoundedRectangle(topLeadingRadius: Layout.plateRadius, topTrailingRadius: Layout.plateRadius).strokeBorder(Ink.rule, lineWidth: 0.75) }
+                .shadow(color: Ink.text.opacity(0.08), radius: 12, y: -3)
                 .ignoresSafeArea(edges: .bottom)
         }
     }
@@ -125,7 +126,8 @@ struct TransactionSlip: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
         .padding(.vertical, 9)
         .frame(width: 168, height: 64, alignment: .leading)
         .background(Ink.paper, in: SlipShape())
@@ -136,16 +138,18 @@ struct TransactionSlip: View {
     }
 }
 
-/// A rounded stub with a row of perforation notches down its left edge.
+/// A rounded stub torn off along its left edge: a row of half-round bites where the perforation was.
 nonisolated struct SlipShape: Shape {
     func path(in rect: CGRect) -> Path {
-        var path = Path(roundedRect: rect, cornerRadius: 10)
-        let notch: CGFloat = 3
-        var y = rect.minY + 12
-        while y < rect.maxY - 10 {
-            path.addEllipse(in: CGRect(x: rect.minX - notch, y: y, width: notch * 2, height: notch * 2))
-            y += 11
+        let notch: CGFloat = 2.5, pitch: CGFloat = 9
+        let count = max(0, Int((rect.height - 20) / pitch))
+        var bites = Path()
+        // Centered down the edge, clear of the rounded corners.
+        var y = rect.midY - CGFloat(count - 1) * pitch / 2
+        for _ in 0..<count {
+            bites.addEllipse(in: CGRect(x: rect.minX - notch, y: y - notch, width: notch * 2, height: notch * 2))
+            y += pitch
         }
-        return path.normalized(eoFill: true)
+        return Path(roundedRect: rect, cornerRadius: 4).subtracting(bites)
     }
 }

@@ -16,10 +16,11 @@ struct ItemDetailView: View {
         let totals = BudgetMath.totals(for: item, funds: funds)
         let isFirstInSeries = funds.history(for: item).first?.month == item.monthKey || funds.history(for: item).isEmpty
         NavigationStack {
-            Form {
+            LedgerForm {
                 Section {
                     TextField("Name", text: $item.name)
-                        .font(.title3.weight(.semibold))
+                        .font(Typeface.title(22))
+                        .foregroundStyle(Ink.text)
                     MoneyField(title: item.isIncomeItem ? "Expected this month" : "Planned this month", cents: $item.plannedCents)
                 } footer: {
                     summary(totals)
@@ -61,7 +62,7 @@ struct ItemDetailView: View {
                         .lineLimit(1...4)
                 }
 
-                Section(item.monthKey.map { "Transactions in \($0.monthName)" } ?? "Transactions") {
+                Section(ledger: item.monthKey.map { "Transactions in \($0.monthName)" } ?? "Transactions") {
                     let assigned = (item.allocations ?? []).filter { $0.transaction?.status == .tracked }
                         .sorted { ($0.transaction?.date ?? .distantPast) > ($1.transaction?.date ?? .distantPast) }
                     if assigned.isEmpty {
@@ -89,8 +90,6 @@ struct ItemDetailView: View {
                     Button("Delete \(item.name)", role: .destructive) { confirmingDelete = true }
                 }
             }
-            .scrollContentBackground(.hidden)
-            .paperBackground()
             .navigationTitle(item.isIncomeItem ? "Income" : (item.group?.name ?? "Item"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

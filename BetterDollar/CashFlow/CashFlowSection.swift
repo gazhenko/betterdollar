@@ -22,11 +22,8 @@ struct InsightsTabPicker: View {
     @AppStorage("cashFlowTab") private var tab: CashFlowTab = .summary
 
     var body: some View {
-        Picker("View", selection: $tab) {
-            ForEach(CashFlowTab.allCases) { Text($0.title).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityIdentifier("cash-flow-tab")
+        LedgerTabs(selection: $tab, options: CashFlowTab.allCases.map { ($0, $0.title) })
+            .accessibilityIdentifier("cash-flow-tab")
     }
 }
 
@@ -73,22 +70,13 @@ struct CashFlowSection: View {
     }
 
     private func header(_ snapshot: CashFlowPlanner.Snapshot) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Cash flow")
-                    .font(Typeface.title(34))
-                    .foregroundStyle(Ink.text)
-                Text("Next \(snapshot.forecast.days.count) days")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Ink.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isHeader)
-            Spacer()
+        ScreenHeader(title: "Cash flow") {
+            Text("Next \(snapshot.forecast.days.count) days")
+        } actions: {
             Button { reviewing = .all } label: {
-                Image(systemName: "slider.horizontal.3").frame(width: 40, height: 40)
+                HeaderButtonLabel(systemImage: "slider.horizontal.3")
             }
-            .font(.title3.weight(.semibold))
+            .buttonStyle(.plain)
             .accessibilityLabel("Paychecks and bills")
             .accessibilityIdentifier("cash-flow-review")
         }
@@ -174,26 +162,28 @@ struct CashFlowPlate: View {
         let forecast = snapshot.forecast
         let isShort = forecast.dip != nil
         let lowest = forecast.lowest
-        VStack(alignment: .leading, spacing: 6) {
-            AmountText(cents: lowest?.endCents ?? forecast.startingCents, font: Typeface.figure(40), color: isShort ? Ink.seal : Ink.primary)
+        let ink = PlateInk(alarm: isShort)
+        let figure = isShort ? Ink.seal : ink.figure
+        VStack(alignment: .leading, spacing: 4) {
+            MoneyFigure(cents: lowest?.endCents ?? forecast.startingCents, color: figure, shade: ink.shade(for: figure))
             Text(lowest.map { "lowest balance, \(CashFlowFormat.weekday($0.date))" } ?? "checking today")
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(Ink.secondary)
+                .foregroundStyle(ink.secondary)
             Text(statusLine(forecast))
                 .font(.callout)
-                .foregroundStyle(isShort ? Ink.seal : Ink.text)
-                .padding(.top, 6)
+                .foregroundStyle(ink.text)
+                .padding(.top, 12)
                 .fixedSize(horizontal: false, vertical: true)
             Text(sourceLine)
                 .font(.caption)
-                .foregroundStyle(Ink.secondary)
+                .foregroundStyle(ink.secondary)
+                .padding(.top, 4)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(20)
-        .padding(.bottom, 10)
+        .padding(22)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .engravedPlate(completion: clearShare(forecast), color: isShort ? Ink.seal : Ink.primary,
-                       borderOpacity: 0.35, animates: !reduceMotion)
+        .engravedPlate(completion: clearShare(forecast), ink: ink, framed: !isShort, animates: !reduceMotion)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("cash-flow-plate")
     }
@@ -201,7 +191,7 @@ struct CashFlowPlate: View {
     /// How much of the forecast is clear before the first dip; the engraving fills that far.
     private func clearShare(_ forecast: CashFlowForecast) -> Double {
         guard let dip = forecast.dip, let index = forecast.days.firstIndex(where: { $0.date == dip.start }) else { return 1 }
-        return max(0.04, Double(index) / Double(max(1, forecast.days.count)))
+        return Double(index) / Double(max(1, forecast.days.count))
     }
 
     private func statusLine(_ forecast: CashFlowForecast) -> String {
@@ -255,8 +245,7 @@ struct PromptCard<Action: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.sheet, in: .rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Ink.rule, lineWidth: 1) }
+        .card()
     }
 }
 
@@ -289,9 +278,9 @@ struct SuggestionList: View {
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.sheet, in: .rect(cornerRadius: 18))
+        .card()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("cash-flow-suggestions")
     }

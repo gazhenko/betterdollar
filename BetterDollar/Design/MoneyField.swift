@@ -21,7 +21,9 @@ struct MoneyField: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .focused($focused)
-                    .frame(minWidth: 70, maxWidth: 140)
+                    // Only as wide as the amount, so the dollar sign sits against it.
+                    .fixedSize()
+                    .frame(minWidth: 36, alignment: .trailing)
                     .accessibilityLabel(title)
             }
             .font(Typeface.amount)

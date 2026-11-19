@@ -28,7 +28,7 @@ struct InsightsScreen: View {
                         CashFlowSection()
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, Layout.margin)
                 .padding(.bottom, 30)
             }
             .statusBarShield()
@@ -45,10 +45,16 @@ struct InsightsScreen: View {
         if let month {
             let funds = FundLedger(months: months)
             let totals = BudgetMath.totals(for: month)
-            HStack(spacing: 12) {
+            // The month's two totals, set side by side between rules like the head of a statement.
+            HStack(alignment: .top, spacing: 16) {
                 StatTile(title: "Spent", cents: totals.spentCents, of: totals.plannedExpenseCents, noun: "planned")
+                Rectangle().fill(Ink.rule).frame(width: 0.75)
                 StatTile(title: "Received", cents: totals.receivedCents, of: totals.plannedIncomeCents, noun: "expected")
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 14)
+            .overlay(alignment: .top) { Rectangle().fill(Ink.text).frame(height: 1.5) }
+            .overlay(alignment: .bottom) { Rectangle().fill(Ink.rule).frame(height: 0.75) }
             GroupSpending(month: month, funds: funds)
             TrendChart(months: months, current: app.month)
             FundProgress(month: month, funds: funds)
@@ -68,13 +74,11 @@ struct StatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.subheadline.weight(.medium)).foregroundStyle(Ink.secondary)
-            AmountText(cents: cents, font: Typeface.figure(24), showsCents: false)
+            MoneyFigure(cents: cents, size: 24, weight: .bold, showsCents: false)
             Text("of \(Money.format(of, showsCents: false)) \(noun)")
                 .font(.caption).foregroundStyle(Ink.secondary)
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.sheet, in: .rect(cornerRadius: 18))
         .accessibilityElement(children: .combine)
     }
 }
@@ -112,8 +116,8 @@ struct GroupSpending: View {
                         Text("\(Money.format(row.totals.activityCents, showsCents: false)) of \(Money.format(row.totals.plannedCents, showsCents: false))")
                             .font(Typeface.amountSmall).foregroundStyle(Ink.secondary)
                     }
-                    Meter(fraction: row.totals.plannedCents > 0 ? Double(row.totals.activityCents) / Double(row.totals.plannedCents) : 1,
-                          tint: over > 0 ? Ink.seal : ChartInk.spending)
+                    SpendRule(progress: row.totals.plannedCents > 0 ? Double(row.totals.activityCents) / Double(row.totals.plannedCents) : 1,
+                              overspent: over > 0, height: 5)
                     if over > 0 {
                         Label("Over by \(Money.format(over))", systemImage: "exclamationmark.circle")
                             .font(.caption.weight(.medium)).foregroundStyle(Ink.seal)
@@ -122,24 +126,6 @@ struct GroupSpending: View {
                 .accessibilityElement(children: .combine)
             }
         }
-    }
-}
-
-/// A rounded meter on a track from the same ink.
-struct Meter: View {
-    let fraction: Double
-    var tint: Color = ChartInk.spending
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4).fill(Ink.track)
-                RoundedRectangle(cornerRadius: 4).fill(tint)
-                    .frame(width: max(fraction > 0 ? 4 : 0, proxy.size.width * min(1, max(0, fraction))))
-            }
-        }
-        .frame(height: 10)
-        .accessibilityHidden(true)
     }
 }
 
@@ -229,7 +215,7 @@ struct FundProgress: View {
                                 .font(Typeface.amountSmall).foregroundStyle(Ink.secondary)
                         }
                         if item.fundGoalCents > 0 {
-                            Meter(fraction: Double(balance) / Double(item.fundGoalCents), tint: ChartInk.income)
+                            SpendRule(progress: Double(balance) / Double(item.fundGoalCents), height: 5)
                             if let target = item.fundTargetDate, let key = item.monthKey,
                                let monthly = BudgetMath.monthlyToReachGoal(balanceCents: funds.carryIn(for: item), goalCents: item.fundGoalCents, from: key, target: target) {
                                 Text(monthly == 0 ? "Goal reached." : "\(Money.format(monthly)) a month reaches it by \(target.formatted(.dateTime.month(.wide).year())).")

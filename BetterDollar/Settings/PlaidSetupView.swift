@@ -12,14 +12,14 @@ struct PlaidSetupView: View {
     @State private var result: (ok: Bool, text: String)?
 
     var body: some View {
-        Form {
+        LedgerForm {
             Section {
                 step(1, "Create a free Plaid account at dashboard.plaid.com. New teams in the US and Canada get the Trial plan: 10 bank connections with transactions, including OAuth banks like Chase and Bank of America.")
                 step(2, "In the Plaid Dashboard, open Developers, then Keys. Copy your client ID and a secret.")
                 step(3, "Paste them below. Start with Sandbox to try fake banks (username user_good, password pass_good), then switch to Production for your real accounts.")
                 Link("Open the Plaid Dashboard", destination: URL(string: "https://dashboard.plaid.com/signup")!)
             } header: {
-                Text("Get your keys")
+                LedgerHeading("Get your keys")
             }
 
             Section {
@@ -36,7 +36,7 @@ struct PlaidSetupView: View {
                     ForEach(PlaidEnvironment.allCases) { Text($0.title).tag($0) }
                 }
             } header: {
-                Text("Your keys")
+                LedgerHeading("Your keys")
             } footer: {
                 Text("Keys are stored in this iPhone's Keychain only. Each environment has its own secret.")
             }
@@ -64,8 +64,6 @@ struct PlaidSetupView: View {
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle("Plaid")
         .onAppear {
             if let saved = app.bank.credentials {

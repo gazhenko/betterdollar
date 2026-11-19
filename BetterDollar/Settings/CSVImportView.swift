@@ -21,7 +21,7 @@ struct CSVImportView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            LedgerForm {
                 Section {
                     Button(text == nil ? "Choose a CSV file" : fileName, systemImage: "doc.text") { isPicking = true }
                 } footer: {
@@ -41,7 +41,7 @@ struct CSVImportView: View {
                         } footer: {
                             Text("Most checking exports show purchases as negative numbers. Many credit card exports show them as positive.")
                         }
-                        Section("Preview") {
+                        Section(ledger: "Preview") {
                             ForEach(Array(csv.rows.prefix(5).enumerated()), id: \.offset) { _, row in
                                 HStack {
                                     VStack(alignment: .leading) {
@@ -73,8 +73,6 @@ struct CSVImportView: View {
                         .foregroundStyle(message.ok ? Ink.primary : Ink.seal)
                 }
             }
-            .scrollContentBackground(.hidden)
-            .paperBackground()
             .navigationTitle("Import CSV")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

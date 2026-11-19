@@ -16,7 +16,14 @@ struct SettingsScreen: View {
     var body: some View {
         @Bindable var bank = app.bank
         NavigationStack {
-            Form {
+            LedgerForm {
+                Section {
+                    ScreenHeader(title: "Settings")
+                        .padding(.bottom, 6)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                }
+                .listSectionSpacing(0)
                 Section {
                     if app.bank.isConfigured {
                         ForEach(banks) { link in
@@ -43,12 +50,12 @@ struct SettingsScreen: View {
                         .accessibilityIdentifier("setup-plaid")
                     }
                 } header: {
-                    Text("Banks")
+                    LedgerHeading("Banks")
                 } footer: {
                     Text("BetterDollar uses your own free Plaid account. Requests go from this iPhone straight to Plaid; there is no BetterDollar server.")
                 }
 
-                Section("Your data") {
+                Section(ledger: "Your data") {
                     Button("Import a CSV from your bank", systemImage: "doc.text") { isImporting = true }
                     NavigationLink { BackupView() } label: {
                         Label("Back up and restore", systemImage: "lock.doc")
@@ -63,10 +70,10 @@ struct SettingsScreen: View {
                     Toggle(isOn: $appLock) { Label("Lock with Face ID", systemImage: "faceid") }
                     NavigationLink { PrivacyView() } label: { Label("What stays on this iPhone", systemImage: "hand.raised") }
                 } header: {
-                    Text("Privacy")
+                    LedgerHeading("Privacy")
                 }
 
-                Section("Coach") {
+                Section(ledger: "Coach") {
                     NavigationLink { CoachModelsView() } label: {
                         Label("On-device AI models", systemImage: "cpu")
                     }
@@ -78,7 +85,7 @@ struct SettingsScreen: View {
                         Label("Source code (MIT License)", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
                 } header: {
-                    Text("About")
+                    LedgerHeading("About")
                 } footer: {
                     Text("BetterDollar is free and open source. It has no ads, no accounts and no analytics.")
                 }
@@ -87,9 +94,10 @@ struct SettingsScreen: View {
                     Button("Erase all data", role: .destructive) { confirmingErase = true }
                 }
             }
-            .scrollContentBackground(.hidden)
-            .paperBackground()
+            .contentMargins(.top, 0, for: .scrollContent)
+            .statusBarShield()
             .navigationTitle("Settings")
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $isImporting) { CSVImportView() }
             .alert("Bank sync", isPresented: Binding(get: { bank.message != nil }, set: { if !$0 { bank.message = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -156,8 +164,8 @@ struct BankDetailView: View {
     @State private var confirmingRemove = false
 
     var body: some View {
-        Form {
-            Section("Accounts") {
+        LedgerForm {
+            Section(ledger: "Accounts") {
                 ForEach(link.accounts ?? []) { account in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
@@ -192,8 +200,6 @@ struct BankDetailView: View {
                 Text("Transactions already imported stay in your budget. On Plaid's Trial plan a removed connection still counts toward your 10.")
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle(link.institutionName)
         .confirmationDialog("Disconnect \(link.institutionName)?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Disconnect", role: .destructive) {

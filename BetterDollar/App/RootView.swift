@@ -16,10 +16,10 @@ struct RootView: View {
         @Bindable var app = app
         ZStack {
             TabView(selection: $app.tab) {
-                Tab("Budget", systemImage: "list.bullet.rectangle.portrait", value: AppTab.budget) { BudgetScreen() }
-                Tab("Transactions", systemImage: "arrow.left.arrow.right", value: AppTab.transactions) { TransactionsScreen() }
-                Tab("Insights", systemImage: "chart.bar.xaxis", value: AppTab.insights) { InsightsScreen() }
-                Tab("Coach", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.coach) { CoachScreen() }
+                Tab("Budget", systemImage: "banknote", value: AppTab.budget) { BudgetScreen() }
+                Tab("Transactions", systemImage: "receipt", value: AppTab.transactions) { TransactionsScreen() }
+                Tab("Insights", systemImage: "chart.line.uptrend.xyaxis", value: AppTab.insights) { InsightsScreen() }
+                Tab("Coach", systemImage: "text.bubble", value: AppTab.coach) { CoachScreen() }
                 Tab("Settings", systemImage: "gearshape", value: AppTab.settings) { SettingsScreen() }
             }
             if scenePhase != .active || (appLockEnabled && !isUnlocked) {
@@ -66,7 +66,7 @@ struct PrivacyCover: View {
     var body: some View {
         ZStack {
             Ink.paper.ignoresSafeArea()
-            Guilloche(completion: 1, lineWidth: 0.5, layers: 14)
+            Guilloche(completion: 1, lineWidth: 0.5, layers: 14, rosetteRadius: nil)
                 .ignoresSafeArea()
                 .opacity(0.8)
             VStack(spacing: 14) {

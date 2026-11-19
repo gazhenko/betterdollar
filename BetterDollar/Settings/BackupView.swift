@@ -35,7 +35,7 @@ struct BackupView: View {
     @State private var status: (ok: Bool, text: String)?
 
     var body: some View {
-        Form {
+        LedgerForm {
             Section {
                 SecureField("Passphrase (8+ characters)", text: $passphrase)
                     .accessibilityIdentifier("backup-passphrase")
@@ -50,7 +50,7 @@ struct BackupView: View {
                 .disabled(passphrase.count < 8 || passphrase != confirmation || isWorking)
                 .accessibilityIdentifier("create-backup")
             } header: {
-                Text("Back up")
+                LedgerHeading("Back up")
             } footer: {
                 Text("The file is encrypted with AES-256 using your passphrase. Save it to iCloud Drive or anywhere in Files. There is no way to recover a forgotten passphrase. Bank connections include your Plaid keys and access tokens, so a restore keeps syncing.")
             }
@@ -72,7 +72,7 @@ struct BackupView: View {
                     Button("Replace everything on this iPhone", role: .destructive, action: restore)
                 }
             } header: {
-                Text("Restore")
+                LedgerHeading("Restore")
             } footer: {
                 Text("Restoring replaces every budget and transaction on this iPhone with the backup's contents.")
             }
@@ -82,8 +82,6 @@ struct BackupView: View {
                     .foregroundStyle(status.ok ? Ink.primary : Ink.seal)
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle("Back up and restore")
         .fileExporter(isPresented: $isExporting, document: document, contentType: .betterDollarBackup,
                       defaultFilename: "BetterDollar \(Date().formatted(.iso8601.year().month().day()))") { result in

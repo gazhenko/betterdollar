@@ -104,7 +104,10 @@ struct CashFlowCalendar: View {
             HStack(spacing: 5) { EventMark(kind: .bill); Text("Bill") }
             HStack(spacing: 5) { EventMark(kind: .card); Text("Card") }
             HStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 3).fill(Ink.seal.opacity(0.18)).frame(width: 14, height: 10)
+                RoundedRectangle(cornerRadius: 3).fill(Ink.sheet)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Ink.seal).frame(height: 2) }
+                    .clipShape(.rect(cornerRadius: 3))
+                    .frame(width: 14, height: 10)
                 Text(forecast.cushionCents > 0 ? "Below \(Money.format(forecast.cushionCents, showsCents: false))" : "Below $0")
             }
         }
@@ -142,10 +145,15 @@ private struct CalendarDayCell: View {
         }
         .padding(5)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
-        .background(background, in: .rect(cornerRadius: 8))
+        .background(background)
+        // A short day is underlined in seal red, like an overspent budget item, so a long dip doesn't flood the month.
+        .overlay(alignment: .bottom) {
+            if isShort { Rectangle().fill(Ink.seal).frame(height: 2) }
+        }
+        .clipShape(.rect(cornerRadius: 4))
         .overlay {
             if isSelected || isToday {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(Ink.primary.opacity(isSelected ? 1 : 0.45), lineWidth: isSelected ? 2 : 1)
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Ink.primary.opacity(isSelected ? 1 : 0.45), lineWidth: isSelected ? 2 : 1)
             }
         }
         .contentShape(.rect)
@@ -156,7 +164,6 @@ private struct CalendarDayCell: View {
 
     private var background: Color {
         guard let day else { return .clear }
-        if isShort { return Ink.seal.opacity(0.16) }
         return day.hasPayday ? Ink.income.opacity(0.12) : Ink.sheet
     }
 
@@ -200,10 +207,9 @@ private struct DayDetail: View {
             DoubleRule(color: Ink.rule)
             LedgerLine(label: "Checking at the end", cents: day.endCents, signed: false, emphasized: true)
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.sheet, in: .rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(day.endCents < cushion ? Ink.seal.opacity(0.7) : Ink.rule, lineWidth: 1) }
+        .card(edge: day.endCents < cushion ? Ink.seal.opacity(0.7) : Ink.rule)
     }
 }
 

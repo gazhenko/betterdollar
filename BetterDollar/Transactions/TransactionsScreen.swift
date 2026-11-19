@@ -28,14 +28,17 @@ struct TransactionsScreen: View {
     var body: some View {
         NavigationStack {
             List {
-                Picker("Show", selection: $status) {
-                    ForEach(TransactionStatus.allCases, id: \.self) { status in
-                        Text("\(label(status)) \(count(status))").tag(status)
-                    }
+                // The same heading as the other tabs, scrolling with the list, instead of a system bar.
+                VStack(alignment: .leading, spacing: 14) {
+                    ScreenHeader(title: "Transactions") { addMenu }
+                    SearchField(text: $search, prompt: "Merchant or budget item")
+                    LedgerTabs(selection: $status, options: TransactionStatus.allCases.map { status in
+                        (status, "\(label(status)) \(count(status))".trimmingCharacters(in: .whitespaces))
+                    })
                 }
-                .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                .listRowInsets(EdgeInsets(top: 0, leading: Layout.margin, bottom: 4, trailing: Layout.margin))
+                .listRowSeparator(.hidden)
 
                 if app.bank.isSyncingAny {
                     HStack(spacing: 8) {
@@ -62,7 +65,9 @@ struct TransactionsScreen: View {
                                 TransactionRow(transaction: transaction, showsDate: false)
                             }
                             .buttonStyle(.plain)
-                            .listRowBackground(Ink.sheet)
+                            // Register lines printed on the page, not rows on a card.
+                            .listRowBackground(Color.clear)
+                            .listRowSeparatorTint(Ink.rule)
                             .swipeActions(edge: .trailing) { trailingActions(transaction) }
                             .swipeActions(edge: .leading) { leadingActions(transaction) }
                             .contextMenu {
@@ -75,35 +80,39 @@ struct TransactionsScreen: View {
                     }
                 }
             }
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .contentMargins(.top, 0, for: .scrollContent)
+            .scrollDismissesKeyboard(.immediately)
+            .statusBarShield()
             .paperBackground()
             .navigationTitle("Transactions")
-            .searchable(text: $search, prompt: "Merchant or budget item")
+            .toolbar(.hidden, for: .navigationBar)
             .refreshable { await app.bank.syncAll(context: context) }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button("Add transaction", systemImage: "plus") { isAdding = true }
-                        Button("Import CSV", systemImage: "doc.text") { isImporting = true }
-                        if !banks.isEmpty {
-                            Button("Sync banks", systemImage: "arrow.triangle.2.circlepath") {
-                                Task { await app.bank.syncAll(context: context) }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    } primaryAction: {
-                        isAdding = true
-                    }
-                    .accessibilityLabel("Add transaction")
-                    .accessibilityIdentifier("add-transaction")
-                }
-            }
             .sheet(item: $assigning) { AssignSheet(transaction: $0) }
             .sheet(item: $editing) { TransactionEditor(transaction: $0) }
             .sheet(isPresented: $isAdding) { TransactionEditor(transaction: nil) }
             .sheet(isPresented: $isImporting) { CSVImportView() }
         }
+    }
+
+    /// Tap to add a transaction; hold for importing and syncing.
+    private var addMenu: some View {
+        Menu {
+            Button("Add transaction", systemImage: "plus") { isAdding = true }
+            Button("Import CSV", systemImage: "doc.text") { isImporting = true }
+            if !banks.isEmpty {
+                Button("Sync banks", systemImage: "arrow.triangle.2.circlepath") {
+                    Task { await app.bank.syncAll(context: context) }
+                }
+            }
+        } label: {
+            HeaderButtonLabel(systemImage: "plus")
+        } primaryAction: {
+            isAdding = true
+        }
+        .accessibilityLabel("Add transaction")
+        .accessibilityIdentifier("add-transaction")
     }
 
     private func label(_ status: TransactionStatus) -> String {
@@ -166,5 +175,32 @@ struct TransactionsScreen: View {
             }
             .tint(Ink.primary)
         }
+    }
+}
+
+/// A search field on the page itself, for lists that draw their own heading.
+struct SearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(Ink.secondary)
+                .accessibilityHidden(true)
+            TextField(prompt, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Ink.secondary)
+                    .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 40)
+        .background(Ink.track, in: .capsule)
     }
 }

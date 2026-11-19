@@ -1,24 +1,53 @@
 import SwiftUI
 
 /// Banknote-style guilloche engraving drawn from hypotrochoid curves.
-/// `completion` (0...1) controls how much of the pattern is drawn, so the plate can
-/// "finish engraving" when the budget reaches zero.
-struct Guilloche: View {
+/// The rosette is always there as a watermark; `completion` (0...1) is how much of it has been inked,
+/// so the plate can "finish engraving" when the budget reaches zero. The band along the bottom is the
+/// border of the note and is always whole.
+struct Guilloche: View, Animatable {
     var completion: Double = 1
     var color: Color = Ink.primary
     var lineWidth: CGFloat = 0.6
     var layers = 10
+    /// Scales the line opacity: stock-colored lines on the green plate need more than ink on paper.
+    var strength: Double = 1
+    /// Radius of the rosette tucked into the top trailing corner. Nil spreads one across the whole view.
+    var rosetteRadius: CGFloat? = 100
+
+    var animatableData: Double {
+        get { completion }
+        set { completion = newValue }
+    }
 
     var body: some View {
         Canvas { context, size in
-            let center = CGPoint(x: size.width * 0.82, y: size.height * 0.5)
-            let scale = max(size.width, size.height) / 230
-            for layer in 0..<layers {
-                let path = Self.curve(center: center, outer: 96, inner: 36, pen: 50,
-                                      rotation: Double(layer) * .pi / 80, scale: scale, completion: completion)
-                context.stroke(path, with: .color(color.opacity(0.22 + 0.02 * Double(layer % 3))), lineWidth: lineWidth)
+            let center: CGPoint, scale: Double
+            if let rosetteRadius {
+                center = CGPoint(x: size.width - rosetteRadius * 0.62, y: rosetteRadius * 0.62)
+                scale = rosetteRadius / 110
+            } else {
+                center = CGPoint(x: size.width * 0.82, y: size.height * 0.5)
+                scale = max(size.width, size.height) / 230
             }
-            // A flowing band along the bottom, like the border of a note.
+            context.drawLayer { rosette in
+                if let rosetteRadius {
+                    // A corner rosette thins out toward its tips, so the copy it reaches stays easy to read.
+                    rosette.clipToLayer { mask in
+                        let fade = Gradient(stops: [.init(color: .black, location: 0.45), .init(color: .black.opacity(0.12), location: 1)])
+                        mask.fill(Path(CGRect(origin: .zero, size: size)),
+                                  with: .radialGradient(fade, center: center, startRadius: 0, endRadius: rosetteRadius))
+                    }
+                }
+                for layer in 0..<layers {
+                    let rotation = Double(layer) * .pi / 80
+                    if completion < 1 {
+                        let whole = Self.curve(center: center, outer: 96, inner: 36, pen: 50, rotation: rotation, scale: scale, completion: 1)
+                        rosette.stroke(whole, with: .color(color.opacity(0.07 * strength)), lineWidth: lineWidth)
+                    }
+                    let inked = Self.curve(center: center, outer: 96, inner: 36, pen: 50, rotation: rotation, scale: scale, completion: completion)
+                    rosette.stroke(inked, with: .color(color.opacity((0.22 + 0.02 * Double(layer % 3)) * strength)), lineWidth: lineWidth)
+                }
+            }
             var band = Path()
             for wave in 0..<6 {
                 let offset = Double(wave) * 0.9
@@ -28,7 +57,7 @@ struct Guilloche: View {
                     step == 0 ? band.move(to: CGPoint(x: x, y: y)) : band.addLine(to: CGPoint(x: x, y: y))
                 }
             }
-            context.stroke(band.trimmedPath(from: 0, to: completion), with: .color(color.opacity(0.25)), lineWidth: lineWidth)
+            context.stroke(band, with: .color(color.opacity(0.25 * strength)), lineWidth: lineWidth)
         }
         .accessibilityHidden(true)
     }

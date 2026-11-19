@@ -54,19 +54,19 @@ struct AssignSheet: View {
         let groups = transaction.isIncome
             ? month.sortedGroups.sorted { $0.isIncome && !$1.isIncome }
             : month.sortedGroups.sorted { !$0.isIncome && $1.isIncome }
-        return List {
+        return LedgerForm {
             Section {
                 TransactionRow(transaction: transaction)
             }
             if let suggestion, search.isEmpty {
-                Section("Last time") {
+                Section(ledger: "Last time") {
                     itemButton(suggestion, funds: funds)
                 }
             }
             ForEach(groups) { group in
                 let items = group.sortedItems.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
                 if !items.isEmpty {
-                    Section(group.name) {
+                    Section(ledger: group.name) {
                         ForEach(items) { itemButton($0, funds: funds) }
                     }
                 }
@@ -116,7 +116,7 @@ struct SplitEditor: View {
     private var canSave: Bool { remaining == 0 && parts.filter { $0.cents > 0 }.allSatisfy { $0.item != nil } && parts.contains { $0.cents > 0 } }
 
     var body: some View {
-        Form {
+        LedgerForm {
             Section {
                 TransactionRow(transaction: transaction)
             }
@@ -156,8 +156,6 @@ struct SplitEditor: View {
                 Text(error).foregroundStyle(Ink.seal)
             }
         }
-        .scrollContentBackground(.hidden)
-        .paperBackground()
         .navigationTitle("Split")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

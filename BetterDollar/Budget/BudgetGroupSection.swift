@@ -34,15 +34,16 @@ struct BudgetGroupSection: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .frame(width: 36, height: 30)
+                        .frame(width: 30, height: 30, alignment: .trailing)
                         .contentShape(.rect)
                 }
                 .foregroundStyle(Ink.secondary)
                 .accessibilityLabel("\(group.name) options")
             }
-            .padding(.top, 22)
-            .padding(.bottom, 6)
-            .padding(.leading, 4)
+            .padding(.top, 30)
+            .padding(.bottom, 4)
+            // A group is a section of the ledger, printed on the page: a heading over a heavy rule, then its lines.
+            Rectangle().fill(Ink.text).frame(height: 1.5)
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(group.sortedItems) { item in
@@ -62,10 +63,7 @@ struct BudgetGroupSection: View {
                 .foregroundStyle(Ink.primary)
                 .accessibilityIdentifier("add-item-\(group.name)")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
-            .background(Ink.sheet, in: .rect(cornerRadius: 18))
-            .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Ink.rule.opacity(0.6), lineWidth: 0.5) }
+            .padding(.top, 2)
         }
         .alert("New \(group.isIncome ? "income" : "item") in \(group.name)", isPresented: $isAddingItem) {
             TextField("Name", text: $draftName)
@@ -139,7 +137,8 @@ struct BudgetItemRow: View {
                     .frame(width: 118)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-                    .background(Ink.track.opacity(0.55), in: .rect(cornerRadius: 8))
+                    .background(Ink.sheet, in: .rect(cornerRadius: 4))
+                    .overlay { RoundedRectangle(cornerRadius: 4).strokeBorder(Ink.rule, lineWidth: 0.75) }
                     .focused(focusedItem, equals: item.persistentModelID)
                     .accessibilityLabel("Planned for \(item.name)")
                     .accessibilityIdentifier("planned-\(item.name)")
@@ -156,21 +155,23 @@ struct BudgetItemRow: View {
                 AmountText(cents: figure, flagsNegative: column == .remaining && !item.isIncomeItem)
             }
         }
-        .padding(.vertical, 11)
-        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
         .background {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Layout.cardRadius)
                 .fill(isTargeted ? Ink.primary.opacity(0.12) : .clear)
                 .overlay {
-                    if isTargeted { RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.primary, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])) }
+                    if isTargeted { RoundedRectangle(cornerRadius: Layout.cardRadius).strokeBorder(Ink.primary, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])) }
                 }
         }
-        .padding(.horizontal, -10)
+        .padding(.horizontal, -8)
         .overlay(alignment: .bottom) {
+            // Every row ends in a line: the spending rule when there's spending to show, a plain ledger rule while planning.
             if column != .planned {
                 SpendRule(progress: totals.progress, overspent: totals.isOverspent && !item.isIncomeItem,
-                          tint: item.isIncomeItem ? Ink.income : Ink.primary, pace: pace)
-                    .padding(.bottom, 2)
+                          tint: item.isIncomeItem ? Ink.income : Ink.primary, pace: pace, height: 2)
+            } else {
+                Rectangle().fill(Ink.rule).frame(height: 0.5)
             }
         }
         .dropDestination(for: String.self) { identifiers, _ in
