@@ -526,6 +526,83 @@ import Testing
         #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 200_00 / 30 + 1)
     }
 
+    @Test func budgetLinesBecomePaychecksAndBills() throws {
+        let container = try BetterDollarSchema.container(inMemory: true)
+        let context = container.mainContext
+        let today = day(10, 31)
+        let checking = BankAccount(externalID: "checking", name: "Checking")
+        checking.type = "depository"; checking.subtype = "checking"; checking.availableBalanceCents = 4_000_00
+        context.insert(checking)
+        let month = BudgetPlanner.createBlank(MonthKey(date: today, calendar: calendar), in: context)
+        let income = BudgetGroup(name: "Income", isIncome: true, sortIndex: 0)
+        income.month = month
+        context.insert(income)
+        var lines: [String: BudgetItem] = [:]
+        for (index, (name, cents)) in [("Paycheck 1", 3_000_00), ("Paycheck 2", 2_800_00), ("Side work", 400_00)].enumerated() {
+            let item = BudgetItem(name: name, plannedCents: cents, sortIndex: index)
+            item.group = income
+            context.insert(item)
+            lines[name] = item
+        }
+        let home = BudgetPlanner.addGroup(named: "Home", to: month, in: context)
+        for (name, cents) in [("Rent", 1_500_00), ("Groceries", 600_00), ("Phone", 80_00), ("Gym", 40_00), ("Vacation", 200_00)] {
+            let item = BudgetPlanner.addItem(named: name, to: home, in: context)
+            item.plannedCents = cents
+            lines[name] = item
+        }
+        lines["Phone"]!.dueDay = 12
+        lines["Vacation"]!.isFund = true
+        func add(_ date: Date, _ cents: Int, income: Bool = false, _ merchant: String, to name: String) {
+            let transaction = LedgerTransaction(date: calendar.date(byAdding: .hour, value: 12, to: date)!, amountCents: cents, isIncome: income,
+                                                merchant: merchant, source: .plaid)
+            context.insert(transaction)
+            transaction.account = checking
+            Ledger.assign(transaction, to: lines[name]!, in: context)
+        }
+        // One of each so far: too little for history to call any of them a pattern.
+        add(day(10, 15), 3_000_00, income: true, "Northwind Payroll", to: "Paycheck 1")
+        add(day(10, 1), 1_500_00, "Oak Street Apartments", to: "Rent")
+        for date in [day(10, 3), day(10, 11), day(10, 24)] { add(date, 90_00, "Corner Grocer", to: "Groceries") }
+        // A small charge against a bigger plan isn't a bill.
+        add(day(10, 9), 12_00, "Corner Gym", to: "Gym")
+        try context.save()
+
+        func snapshot() -> CashFlowPlanner.Snapshot { CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar) }
+        let before = snapshot()
+        #expect(before.patterns.isEmpty && before.missingIncome.count == 3)
+        #expect(before.proposals.map(\.name) == ["Paycheck 1", "Paycheck 2", "Side work", "Rent"])
+        let byName = Dictionary(before.proposals.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        // Received on the 15th, so next on the 15th; the two nobody has seen are spread across the month.
+        #expect(byName["Paycheck 1"]?.nextDate == day(11, 15) && byName["Paycheck 1"]?.basis == .lastSeen(day(10, 15)))
+        #expect(byName["Paycheck 2"]?.nextDate == day(11, 1) && byName["Paycheck 2"]?.basis == .guess)
+        #expect(byName["Side work"]?.nextDate == day(11, 16))
+        #expect(byName["Rent"]?.nextDate == day(11, 1) && byName["Rent"]?.isIncome == false)
+        // The phone bill has a due day, so it already counts.
+        #expect(before.datedBudgetItems == ["Phone"])
+        #expect(!before.forecast.events.contains { $0.name == "Rent" })
+
+        // Nothing is added until the person picks; here they skip the side work and move a payday.
+        var chosen = before.proposals.filter { $0.name != "Side work" }
+        chosen[1].nextDate = day(11, 28)
+        #expect(CashFlowPlanner.add(chosen, in: context).count == 3)
+        let after = snapshot()
+        #expect(after.proposals.map(\.name) == ["Side work"])
+        #expect(after.missingIncome == [CashFlowPlanner.MissingIncome(name: "Side work", cents: 400_00)])
+        let events = after.forecast.events
+        #expect(events.filter { $0.name == "Paycheck 1" }.map(\.date) == [day(11, 15), day(12, 15)])
+        #expect(events.filter { $0.name == "Paycheck 2" }.map(\.date) == [day(11, 28), day(12, 28)])
+        #expect(events.filter { $0.name == "Rent" }.map(\.amountCents) == [-1_500_00, -1_500_00])
+        // Rent is a dated bill now, so only groceries and the gym are spread over November.
+        #expect(after.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == (600_00 + 40_00) / 30 + 1)
+        // Adding the same ones again does nothing.
+        #expect(CashFlowPlanner.add(chosen, in: context).isEmpty)
+
+        // The amounts keep following the plan.
+        lines["Paycheck 1"]!.plannedCents = 3_200_00
+        try context.save()
+        #expect(snapshot().forecast.events.first { $0.name == "Paycheck 1" }?.amountCents == 3_200_00)
+    }
+
     @Test func oneTimePaychecksCountOnce() throws {
         let container = try BetterDollarSchema.container(inMemory: true)
         let context = container.mainContext

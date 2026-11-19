@@ -65,7 +65,8 @@ struct CashFlowSection: View {
             }
         }
         .sheet(item: $reviewing) { focus in
-            CashFlowReviewView(focus: focus, patterns: snapshot.patterns, cardInfo: snapshot.cards)
+            CashFlowReviewView(focus: focus, patterns: snapshot.patterns, cardInfo: snapshot.cards,
+                               proposals: snapshot.proposals, datedBudgetItems: snapshot.datedBudgetItems)
         }
     }
 
@@ -107,8 +108,14 @@ struct CashFlowSection: View {
         }
         if !snapshot.missingIncome.isEmpty {
             PromptCard(systemImage: "banknote", text: missingIncomeText(snapshot.missingIncome)) {
-                Button("Add a paycheck") { reviewing = .addPaycheck }
-                    .font(.subheadline.weight(.semibold))
+                // When the budget lines can be turned into paychecks, offer that; otherwise add one by hand.
+                if snapshot.proposals.contains(where: \.isIncome) {
+                    Button("Fill in from my budget") { reviewing = .fillFromBudget }
+                        .font(.subheadline.weight(.semibold))
+                } else {
+                    Button("Add a paycheck") { reviewing = .addPaycheck }
+                        .font(.subheadline.weight(.semibold))
+                }
             }
         }
         if snapshot.unreviewedCount > 0 {
@@ -117,7 +124,8 @@ struct CashFlowSection: View {
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("review-found")
             }
-        } else if !snapshot.hasPaydays {
+        } else if !snapshot.hasPaydays && snapshot.missingIncome.isEmpty {
+            // With income planned in the budget, the prompt above already says what's missing.
             PromptCard(systemImage: "banknote", text: "No regular paycheck found in checking, so this forecast has no money coming in.") {
                 Button("Add a paycheck") { reviewing = .addPaycheck }
                     .font(.subheadline.weight(.semibold))

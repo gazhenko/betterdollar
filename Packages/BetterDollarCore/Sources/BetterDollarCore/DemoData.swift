@@ -62,7 +62,9 @@ import SwiftData
         pattern.firstIndex { $0.1 == name }
     })
 
-    public static func seed(into context: ModelContext, today: Date = Date(), calendar: Calendar = .current) {
+    /// `historyMonths` is how far back the sample goes, this month included. With one, nothing has repeated yet,
+    /// which is how the app looks to someone in their first month.
+    public static func seed(into context: ModelContext, today: Date = Date(), calendar: Calendar = .current, historyMonths: Int = 3) {
         let checking = BankAccount(externalID: "demo-checking", name: "Everyday Checking")
         checking.mask = "4821"; checking.type = "depository"; checking.subtype = "checking"
         checking.currentBalanceCents = 4_382_16; checking.availableBalanceCents = 4_382_16
@@ -77,7 +79,7 @@ import SwiftData
         let current = MonthKey(date: today, calendar: calendar)
         let todayDay = calendar.component(.day, from: today)
         var series: [String: UUID] = [:]
-        for offset in (0...2).reversed() {
+        for offset in (0..<max(1, historyMonths)).reversed() {
             let key = current.adding(months: -offset)
             let month = BudgetMonth(key: key)
             context.insert(month)

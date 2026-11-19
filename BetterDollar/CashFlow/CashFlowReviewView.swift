@@ -5,13 +5,17 @@ import SwiftUI
 /// Paychecks, bills and card payments the forecast uses: check what was found, change it, or add more.
 struct CashFlowReviewView: View {
     enum Focus: String, Identifiable {
-        case all, cards, addPaycheck
+        case all, cards, addPaycheck, fillFromBudget
         var id: String { rawValue }
     }
 
     let focus: Focus
     let patterns: [RecurringPattern]
     let cardInfo: [CashFlowPlanner.Card]
+    /// Paychecks and bills the budget plans that aren't in the forecast yet.
+    var proposals: [CashFlowPlanner.Proposal] = []
+    /// Budget items with a due day, which already count as bills.
+    var datedBudgetItems: [String] = []
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -19,13 +23,22 @@ struct CashFlowReviewView: View {
     @Query private var accounts: [BankAccount]
     @AppStorage("cashFlowCushion") private var cushionCents = 0
     @State private var editing: FlowEditor.Target?
+    @State private var isFilling = false
 
+    private var planned: [UUID: Int] { CashFlowPlanner.plannedBySeries(in: context) }
     private var cards: [BankAccount] { accounts.filter { $0.type == "credit" && !$0.isHidden }.sorted { $0.displayName < $1.displayName } }
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
                 LedgerForm {
+                    Section {
+                        Button("Fill in from my budget", systemImage: "text.badge.plus") { isFilling = true }
+                            .disabled(proposals.isEmpty)
+                            .accessibilityIdentifier("fill-from-budget")
+                    } footer: {
+                        Text(fillFooter)
+                    }
                     flowSection(income: true)
                     flowSection(income: false)
                     if !cards.isEmpty {
@@ -56,6 +69,7 @@ struct CashFlowReviewView: View {
                 .onAppear {
                     if focus == .cards { proxy.scrollTo(Focus.cards, anchor: .top) }
                     if focus == .addPaycheck { editing = .new(isIncome: true) }
+                    if focus == .fillFromBudget, !proposals.isEmpty { isFilling = true }
                 }
             }
             .navigationTitle("Paychecks and bills")
@@ -69,6 +83,7 @@ struct CashFlowReviewView: View {
                 }
             }
             .sheet(item: $editing) { FlowEditor(target: $0) }
+            .sheet(isPresented: $isFilling) { BudgetFillView(proposals: proposals, datedBudgetItems: datedBudgetItems) }
         }
     }
 
@@ -90,7 +105,8 @@ struct CashFlowReviewView: View {
                 Button { editing = .existing(flow) } label: {
                     FlowRow(name: flow.name.nonEmpty ?? (income ? "Paycheck" : "Bill"),
                             detail: addedDetail(flow),
-                            cents: flow.amountCents, isOff: flow.isIgnored)
+                            cents: flow.amountCents > 0 ? flow.amountCents : flow.coversSeriesID.flatMap { planned[$0] } ?? 0,
+                            isOff: flow.isIgnored)
                 }
                 .tint(Ink.text)
             }
@@ -112,10 +128,23 @@ struct CashFlowReviewView: View {
 
     private func decision(_ pattern: RecurringPattern) -> RecurringFlow? { flows.first { $0.key == pattern.id } }
 
+    private var fillFooter: String {
+        let pay = proposals.filter(\.isIncome).count
+        let bills = proposals.count - pay
+        guard !proposals.isEmpty else {
+            return "Nothing to add. Every paycheck and bill your budget plans is already here, or counts as everyday spending."
+        }
+        let parts = [pay > 0 ? "\(pay) \(pay == 1 ? "paycheck" : "paychecks")" : nil,
+                     bills > 0 ? "\(bills) \(bills == 1 ? "bill" : "bills")" : nil].compactMap { $0 }
+        return "Your budget plans \(parts.formatted(.list(type: .and))) that \(proposals.count == 1 ? "isn't" : "aren't") in the forecast yet. Check the dates, then add them."
+    }
+
     private func addedDetail(_ flow: RecurringFlow) -> String {
         let date = flow.nextDate.map(CashFlowFormat.short)
+        // No amount of its own: it uses what the budget plans for its line.
+        let source = flow.amountCents == 0 && flow.coversSeriesID != nil ? "Follows your budget" : "Added by you"
         guard flow.cadence == .once else {
-            return "Added by you, \(flow.cadence.title.lowercased())\(date.map { ", from \($0)" } ?? "")"
+            return "\(source), \(flow.cadence.title.lowercased())\(date.map { ", from \($0)" } ?? "")"
         }
         return "Added by you, just once\(date.map { ", on \($0)" } ?? "")"
     }
@@ -394,9 +423,12 @@ private struct FlowEditor: View {
     @State private var coversSeriesID: UUID?
     @State private var isIncome = false
 
-    private var items: [BudgetItem] {
-        let plan = months.last { $0.monthKey <= MonthKey.current() } ?? months.first
-        return (plan?.expenseGroups ?? []).flatMap(\.sortedItems)
+    private var plan: BudgetMonth? { months.last { $0.monthKey <= MonthKey.current() } ?? months.first }
+    private var items: [BudgetItem] { (plan?.expenseGroups ?? []).flatMap(\.sortedItems) }
+    /// The budget line this is linked to, when it plans an amount to fall back on.
+    private var linked: BudgetItem? {
+        guard let coversSeriesID else { return nil }
+        return (plan?.sortedGroups ?? []).flatMap(\.sortedItems).first { $0.seriesID == coversSeriesID && $0.plannedCents > 0 }
     }
 
     var body: some View {
@@ -404,12 +436,16 @@ private struct FlowEditor: View {
             LedgerForm {
                 Section {
                     TextField(isIncome ? "Employer" : "Name", text: $name)
-                    MoneyField(title: "Amount", cents: $amountCents)
+                    MoneyField(title: "Amount", cents: $amountCents, prompt: linked.map { Money.editableText($0.plannedCents) } ?? "0.00")
                     Picker("How often", selection: $cadence) {
                         ForEach(Cadence.allCases) { Text($0.title).tag($0) }
                     }
                     DatePicker(cadence == .once ? (isIncome ? "Payday" : "Due") : (isIncome ? "Next payday" : "Next due"),
                                selection: $nextDate, displayedComponents: .date)
+                } footer: {
+                    if let linked {
+                        Text("Leave the amount empty to use the \(Money.format(linked.plannedCents)) your budget plans for \(linked.name).")
+                    }
                 }
                 if !isIncome {
                     Section {
@@ -435,7 +471,7 @@ private struct FlowEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: save).disabled(amountCents <= 0)
+                    Button("Save", action: save).disabled(amountCents <= 0 && linked == nil)
                 }
             }
             .onAppear(perform: load)
@@ -478,9 +514,119 @@ private struct FlowEditor: View {
         flow.amountCents = amountCents
         flow.cadence = cadence
         flow.nextDate = Calendar.current.startOfDay(for: nextDate)
-        flow.coversSeriesID = isIncome ? nil : coversSeriesID
+        // A paycheck has no "Pays for" to change, so it keeps the budget line it came from.
+        if !isIncome { flow.coversSeriesID = coversSeriesID }
         try? context.save()
         dismiss()
+    }
+}
+
+/// The process behind "Fill in from my budget": what the budget plans that the forecast hasn't dated, for the person to
+/// check, correct and add. Nothing is added until they say so.
+private struct BudgetFillView: View {
+    struct Draft: Identifiable {
+        var proposal: CashFlowPlanner.Proposal
+        var isOn = true
+        var id: UUID { proposal.id }
+    }
+
+    let datedBudgetItems: [String]
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @State private var drafts: [Draft]
+
+    init(proposals: [CashFlowPlanner.Proposal], datedBudgetItems: [String]) {
+        self.datedBudgetItems = datedBudgetItems
+        _drafts = State(initialValue: proposals.map { Draft(proposal: $0) })
+    }
+
+    private var chosen: [CashFlowPlanner.Proposal] { drafts.filter(\.isOn).map(\.proposal) }
+
+    var body: some View {
+        NavigationStack {
+            LedgerForm {
+                section(income: true)
+                section(income: false)
+            }
+            .navigationTitle("From your budget")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(chosen.isEmpty ? "Add" : "Add \(chosen.count)") {
+                        CashFlowPlanner.add(chosen, in: context)
+                        dismiss()
+                    }
+                    .disabled(chosen.isEmpty)
+                    .accessibilityIdentifier("add-from-budget")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func section(income: Bool) -> some View {
+        let indices = drafts.indices.filter { drafts[$0].proposal.isIncome == income }
+        if !indices.isEmpty {
+            Section {
+                ForEach(indices, id: \.self) { index in
+                    row($drafts[index])
+                }
+            } header: {
+                LedgerHeading(income ? "Paychecks" : "Bills")
+            } footer: {
+                Text(income ? paycheckFooter : billFooter)
+            }
+        }
+    }
+
+    private func row(_ draft: Binding<Draft>) -> some View {
+        let proposal = draft.wrappedValue.proposal
+        return VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: draft.isOn) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(proposal.name).foregroundStyle(Ink.text)
+                        Text(basisText(proposal)).font(.caption).foregroundStyle(Ink.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(Money.format(proposal.amountCents))
+                        .font(Typeface.amountSmall)
+                        .foregroundStyle(Ink.text)
+                }
+            }
+            .tint(Ink.primary)
+            .accessibilityIdentifier("fill-\(proposal.name)")
+            if draft.wrappedValue.isOn {
+                DatePicker(proposal.isIncome ? "Next payday" : "Next due", selection: draft.proposal.nextDate, displayedComponents: .date)
+                    .font(.subheadline)
+                    .foregroundStyle(Ink.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func basisText(_ proposal: CashFlowPlanner.Proposal) -> String {
+        let often = proposal.cadence.title
+        switch proposal.basis {
+        case .lastSeen(let date):
+            return "\(often), last \(proposal.isIncome ? "received" : "paid") \(CashFlowFormat.short(date))"
+        case .dueDay:
+            return "\(often), on the day set in your budget"
+        case .guess:
+            return "\(often). The day is a guess; set your payday"
+        }
+    }
+
+    private var paycheckFooter: String {
+        "Income your budget plans that the forecast doesn't count yet. Each is added as one payday a month for the planned amount, and keeps following your budget. You can change how often afterward."
+    }
+
+    private var billFooter: String {
+        var text = "Budget items checking has paid in one payment a month."
+        if !datedBudgetItems.isEmpty {
+            text += " \(datedBudgetItems.formatted(.list(type: .and))) already \(datedBudgetItems.count == 1 ? "counts" : "count") on \(datedBudgetItems.count == 1 ? "its" : "their") due day."
+        }
+        return text + " The rest of the budget is spread across the month as everyday spending."
     }
 }
 

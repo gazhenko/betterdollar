@@ -288,4 +288,33 @@ import XCTest
         XCTAssertTrue(app.navigationBars["Back up and restore"].waitForExistence(timeout: 5))
         snap("backup")
     }
+
+    /// In a first month nothing has repeated in checking yet, so paychecks and bills come from the budget.
+    func testFillPaychecksAndBillsFromBudget() {
+        let app = launch(["-BDFirstMonth", "-BDTab", "insights", "-cashFlowTab", "summary"])
+        func snap(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        // The budget plans income the forecast doesn't count, and offers to fill it in.
+        let offer = app.buttons["Fill in from my budget"].firstMatch
+        XCTAssertTrue(offer.waitForExistence(timeout: 8))
+        snap("fill-offer")
+        offer.tap()
+        XCTAssertTrue(app.navigationBars["From your budget"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "fill-Paycheck 1").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "fill-Paycheck 2").exists)
+        snap("fill-from-budget")
+
+        element(app, "add-from-budget").tap()
+        XCTAssertTrue(app.navigationBars["Paychecks and bills"].waitForExistence(timeout: 5))
+        let paycheck = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Paycheck 1")).firstMatch
+        XCTAssertTrue(paycheck.waitForExistence(timeout: 5))
+        XCTAssertTrue(paycheck.label.contains("Follows your budget"), paycheck.label)
+        // Everything the budget plans is in the forecast now.
+        XCTAssertFalse(element(app, "fill-from-budget").isEnabled)
+        snap("fill-done")
+    }
 }

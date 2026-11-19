@@ -36,6 +36,32 @@ import SwiftData
         public var cents: Int
     }
 
+    /// A paycheck or bill the budget plans that the forecast hasn't put on a date: nothing found in history matches it
+    /// and nobody has added it. Offered for the person to check and add; never added on its own.
+    public struct Proposal: Sendable, Hashable, Identifiable {
+        /// Where the date comes from.
+        public enum Basis: Sendable, Hashable {
+            /// The last time it came in or was paid.
+            case lastSeen(Date)
+            /// The due day set on the budget item.
+            case dueDay(Int)
+            /// Nothing to go on: paydays spread across the month for the person to correct.
+            case guess
+        }
+
+        public var id: UUID { seriesID }
+        /// The budget item it comes from.
+        public var seriesID: UUID
+        public var name: String
+        public var isIncome: Bool
+        public var amountCents: Int
+        public var cadence: Cadence
+        public var nextDate: Date
+        public var basis: Basis
+        /// Its amount is what the budget plans, and keeps following the plan after it's added.
+        public var followsBudget: Bool
+    }
+
     /// Everything the cash flow screens show.
     public struct Snapshot: Sendable {
         public var forecast: CashFlowForecast
@@ -51,6 +77,10 @@ import SwiftData
         public var savingsCents: Int
         /// Income the budget plans that no paycheck in the forecast matches, so it isn't counted.
         public var missingIncome: [MissingIncome] = []
+        /// Paychecks and bills the budget plans that could be added to the forecast.
+        public var proposals: [Proposal] = []
+        /// Budget items with a due day, which already count as bills on that day.
+        public var datedBudgetItems: [String] = []
 
         public var hasPaydays: Bool { forecast.events.contains { $0.kind == .payday } }
         /// Cards with a balance the forecast can't place: no day set and none found in history.
@@ -119,8 +149,9 @@ import SwiftData
                 cadence: pattern.cadence, nextDate: pattern.nextDate(calendar: calendar), monthDays: pattern.monthDays,
                 isEstimate: pattern.isVariable && !customAmount, coversSeriesID: covers(decision, pattern)))
         }
+        let planned = plannedBySeries(in: context, current: current)
         for flow in flows where flow.isManual && !flow.isIgnored {
-            if let schedule = schedule(for: flow, today: today, calendar: calendar) { schedules.append(schedule) }
+            if let schedule = schedule(for: flow, planned: planned, today: today, calendar: calendar) { schedules.append(schedule) }
         }
 
         // Cards: paid on the day that was set, or the day checking usually pays them.
@@ -236,13 +267,28 @@ import SwiftData
                                     everyday: everyday, savingsCents: savings.reduce(0) { $0 + max(0, balance($1)) })
         let forecast = CashFlowForecast.make(inputs, calendar: calendar)
         let paychecks = schedules.filter(\.isIncome)
-        let planned = (currentPlan(in: context, current: current)?.sortedGroups ?? []).filter(\.isIncome).flatMap(\.sortedItems)
-        let missingIncome = planned.filter { item in
+        let plan = currentPlan(in: context, current: current)
+        let unseenIncome = (plan?.sortedGroups ?? []).filter(\.isIncome).flatMap(\.sortedItems).filter { item in
             item.plannedCents > 0 && !paychecks.contains { paycheck in
-                abs(paycheck.amountCents - item.plannedCents) * 100 <= item.plannedCents
+                paycheck.coversSeriesID == item.seriesID
+                    || abs(paycheck.amountCents - item.plannedCents) * 100 <= item.plannedCents
                     || !significantWords(paycheck.name).isDisjoint(with: significantWords(item.name))
             }
-        }.map { MissingIncome(name: $0.name, cents: $0.plannedCents) }
+        }
+        let missingIncome = unseenIncome.map { MissingIncome(name: $0.name, cents: $0.plannedCents) }
+        // Lines someone already added and then turned off aren't offered again.
+        let claimed = Set(flows.filter(\.isManual).compactMap(\.coversSeriesID))
+        let undatedBills = (plan?.expenseGroups ?? []).flatMap { group in
+            group.sortedItems.filter { item in
+                !item.isFund && item.plannedCents > 0 && item.dueDay == 0 && !covered.contains(item.seriesID)
+                    && spentOn[group.name] == nil && itemCards[item.seriesID] == nil
+            }
+        }
+        let proposals = proposals(income: unseenIncome.filter { !claimed.contains($0.seriesID) },
+                                  bills: undatedBills.filter { !claimed.contains($0.seriesID) },
+                                  cash: cash, today: today, calendar: calendar)
+        let datedBudgetItems = (plan?.expenseGroups ?? []).flatMap(\.sortedItems)
+            .filter { !$0.isFund && $0.plannedCents > 0 && $0.dueDay > 0 && !covered.contains($0.seriesID) }.map(\.name)
         for index in cardInfo.indices {
             cardInfo[index].payments = forecast.events.filter { $0.id.hasPrefix("card:\(cardInfo[index].id)") }
         }
@@ -255,7 +301,86 @@ import SwiftData
             balanceAsOf: checking.compactMap { $0.link?.lastSyncedAt }.min(),
             cards: cardInfo,
             savingsCents: inputs.savingsCents,
-            missingIncome: missingIncome)
+            missingIncome: missingIncome,
+            proposals: proposals,
+            datedBudgetItems: datedBudgetItems)
+    }
+
+    /// Budget lines as paychecks and bills. A paycheck gets its date from the last time it was received, else the line's
+    /// due day, else a guess. An expense line is a bill only on evidence: checking paid most of it in a single payment
+    /// in every month it was paid, which sets it apart from spending that comes in many small charges.
+    static func proposals(income: [BudgetItem], bills: [BudgetItem], cash: [CashFlowHistoryEntry], today: Date,
+                          calendar: Calendar) -> [Proposal] {
+        func days(_ entries: [CashFlowHistoryEntry]) -> [Date] {
+            Array(Set(entries.map { calendar.startOfDay(for: $0.date) })).sorted()
+        }
+        func monthly(after last: Date) -> Date {
+            let earliest = calendar.date(byAdding: .day, value: 20, to: last) ?? last
+            return CashFlowSchedule.first(onOrAfter: earliest, monthDays: [calendar.component(.day, from: last)], calendar: calendar)
+        }
+        var result: [Proposal] = []
+        let unknown = income.filter { item in item.dueDay == 0 && !cash.contains { $0.isIncome && $0.seriesIDs.contains(item.seriesID) } }
+        for item in income {
+            let received = cash.filter { $0.isIncome && $0.seriesIDs.contains(item.seriesID) }.sorted { $0.date < $1.date }
+            let seen = days(received)
+            var proposal = Proposal(seriesID: item.seriesID, name: item.name, isIncome: true, amountCents: item.plannedCents,
+                                    cadence: .monthly, nextDate: today, basis: .guess, followsBudget: true)
+            if seen.count >= 3, let (cadence, monthDays) = RecurringDetector.classify(seen, calendar: calendar), cadence != .monthly {
+                // Paid more than once a month: each paycheck is its own amount, not the month's plan.
+                let pattern = RecurringPattern(id: "", name: item.name, isIncome: true, cadence: cadence, amountCents: 0,
+                                               isVariable: false, dates: seen, monthDays: monthDays)
+                proposal.cadence = cadence
+                proposal.nextDate = pattern.nextDate(calendar: calendar)
+                proposal.amountCents = RecurringDetector.middle(Array(received.map(\.amountCents).suffix(3)), roundingUp: false)
+                proposal.basis = .lastSeen(seen[seen.count - 1])
+                proposal.followsBudget = false
+            } else if let last = seen.last {
+                proposal.nextDate = monthly(after: last)
+                proposal.basis = .lastSeen(last)
+            } else if item.dueDay > 0 {
+                proposal.nextDate = CashFlowSchedule.first(onOrAfter: today, monthDays: [item.dueDay], calendar: calendar)
+                proposal.basis = .dueDay(item.dueDay)
+            } else {
+                // One payday on the 1st, two on the 1st and 16th, and so on.
+                let index = unknown.firstIndex { $0.seriesID == item.seriesID } ?? 0
+                proposal.nextDate = CashFlowSchedule.first(onOrAfter: today, monthDays: [1 + index * 30 / max(1, unknown.count)], calendar: calendar)
+            }
+            result.append(proposal)
+        }
+        for item in bills {
+            let paid = cash.filter { !$0.isIncome && !$0.isCardPayment && $0.seriesIDs.contains(item.seriesID) }.sorted { $0.date < $1.date }
+            guard let last = paid.last, last.amountCents * 10 >= item.plannedCents * 8 else { continue }
+            let perMonth = Dictionary(grouping: paid) { MonthKey(date: $0.date, calendar: calendar) }
+            guard perMonth.values.allSatisfy({ $0.count == 1 }) else { continue }
+            let day = calendar.startOfDay(for: last.date)
+            result.append(Proposal(seriesID: item.seriesID, name: item.name, isIncome: false, amountCents: item.plannedCents,
+                                   cadence: .monthly, nextDate: monthly(after: day), basis: .lastSeen(day), followsBudget: true))
+        }
+        return result
+    }
+
+    /// Adds proposals to the forecast as paychecks and bills, linked to their budget lines. The person chooses which.
+    @discardableResult public static func add(_ proposals: [Proposal], in context: ModelContext) -> [RecurringFlow] {
+        let existing = Set(((try? context.fetch(FetchDescriptor<RecurringFlow>())) ?? []).filter(\.isManual).compactMap(\.coversSeriesID))
+        var added: [RecurringFlow] = []
+        for proposal in proposals where !existing.contains(proposal.seriesID) {
+            let flow = RecurringFlow(name: proposal.name, isIncome: proposal.isIncome)
+            // Zero follows what the budget plans for the line.
+            flow.amountCents = proposal.followsBudget ? 0 : proposal.amountCents
+            flow.cadence = proposal.cadence
+            flow.nextDate = proposal.nextDate
+            flow.coversSeriesID = proposal.seriesID
+            context.insert(flow)
+            added.append(flow)
+        }
+        try? context.save()
+        return added
+    }
+
+    /// What this month's plan (or the latest before it) plans for each budget line, income included.
+    public static func plannedBySeries(in context: ModelContext, current: MonthKey = .current()) -> [UUID: Int] {
+        let items = (currentPlan(in: context, current: current)?.sortedGroups ?? []).flatMap(\.sortedItems)
+        return Dictionary(items.map { ($0.seriesID, $0.plannedCents) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// Budget items with due days become dated bills; the rest of the plan is everyday spending.
@@ -369,8 +494,10 @@ import SwiftData
         return Set(name.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 4 && !common.contains($0) })
     }
 
-    static func schedule(for flow: RecurringFlow, today: Date, calendar: Calendar) -> CashFlowSchedule? {
-        guard let next = flow.nextDate, flow.amountCents > 0 else { return nil }
+    /// An added paycheck or bill without an amount of its own uses what the budget plans for the line it's linked to.
+    static func schedule(for flow: RecurringFlow, planned: [UUID: Int] = [:], today: Date, calendar: Calendar) -> CashFlowSchedule? {
+        let amount = flow.amountCents > 0 ? flow.amountCents : flow.coversSeriesID.flatMap { planned[$0] } ?? 0
+        guard let next = flow.nextDate, amount > 0 else { return nil }
         let day = calendar.component(.day, from: next)
         let monthDays: [Int] = switch flow.cadence {
         case .monthly: [day]
@@ -385,7 +512,7 @@ import SwiftData
         }
         guard date != .distantFuture else { return nil }
         return CashFlowSchedule(id: "manual:\(flow.uuid)", name: flow.name.isEmpty ? (flow.isIncome ? "Paycheck" : "Bill") : flow.name,
-                                isIncome: flow.isIncome, amountCents: flow.amountCents, cadence: flow.cadence, nextDate: date,
+                                isIncome: flow.isIncome, amountCents: amount, cadence: flow.cadence, nextDate: date,
                                 monthDays: monthDays, coversSeriesID: flow.coversSeriesID)
     }
 

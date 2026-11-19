@@ -25,9 +25,11 @@ struct BetterDollarApp: App {
     private static func makeContainer() -> ModelContainer {
         let arguments = ProcessInfo.processInfo.arguments
         do {
-            if arguments.contains("-BDDemo") || arguments.contains("-BDEmpty") {
+            if arguments.contains("-BDDemo") || arguments.contains("-BDEmpty") || arguments.contains("-BDFirstMonth") {
                 let container = try BetterDollarSchema.container(inMemory: true)
                 if arguments.contains("-BDDemo") { DemoData.seed(into: container.mainContext) }
+                // The sample household with only this month behind it.
+                if arguments.contains("-BDFirstMonth") { DemoData.seed(into: container.mainContext, historyMonths: 1) }
                 return container
             }
             let directory = URL.applicationSupportDirectory.appending(path: "BetterDollar", directoryHint: .isDirectory)
