@@ -27,7 +27,7 @@ struct InsightsTabPicker: View {
     }
 }
 
-/// Checking walked forward through paydays, bills and everyday spending, so a dip shows up before it happens.
+/// Checking walked forward through paydays, bills and card payments, so a dip shows up before it happens.
 struct CashFlowSection: View {
     @Environment(\.modelContext) private var context
     // Read so the forecast refreshes whenever any of them change.
@@ -298,7 +298,6 @@ struct SuggestionList: View {
         case .moveSavings: "arrow.left.arrow.right"
         case .moveBill: "calendar.badge.clock"
         case .splitPayment: "square.split.2x1"
-        case .spendLess: "cart"
         case .needMore: "exclamationmark.triangle"
         }
     }
@@ -310,8 +309,8 @@ struct HowCashFlowWorks: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("It starts from your checking balance and walks forward one day at a time.")
                 Text("Paychecks and bills come from your checking history: anything that repeats every week, every two weeks, twice a month or monthly. Turn any of them off, change an amount, or add your own under Paychecks and bills.")
-                Text("Budget items with a due day are paid on that day. The rest of each budget item is spread evenly over the month as everyday spending. Funds stay in checking until you spend them, so they aren't subtracted.")
-                Text("A credit card is paid on the due day you set, or the day checking usually pays it. It pays what you owe as the statement balance, the full balance, the minimum, a set amount or what you usually pay. Spending in the budget groups you pay with a card builds up on the card and leaves checking with its payment; other card spending counts as everyday spending.")
+                Text("The balance only moves on a day when money actually comes in or goes out. Budget items with a due day are paid on that day. Budget items without one aren't subtracted, and neither are funds; give an item a due day, or add a bill, for anything that leaves checking on a schedule.")
+                Text("A credit card is paid on the due day you set, or the day checking usually pays it. It pays what you owe as the statement balance, the full balance, the minimum, a set amount or what you usually pay. Spending in the budget groups you pay with a card builds up on the card and leaves checking with its payment.")
                 Text("Payments a few days late still count, on today.")
             }
             .font(.subheadline)

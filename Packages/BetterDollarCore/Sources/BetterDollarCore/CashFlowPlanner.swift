@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 /// Builds the cash flow forecast from the store: checking balances, paychecks and bills found in
-/// checking history, card payments, and the budget's due dates and everyday spending.
+/// checking history, card payments, and the budget's due dates. Budget lines without a date never move checking.
 @MainActor public enum CashFlowPlanner {
     /// A credit card as cash flow sees it.
     public struct Card: Identifiable, Sendable {
@@ -175,7 +175,7 @@ import SwiftData
             case .balance: .balance
             case .minimum: .monthly(fixed > 0 ? fixed : minimum)
             case .usual: habit.map { .monthly($0.monthlyCents) } ?? .statement(remainingCents: statement ?? owed)
-            case .fixed where fixed > 0: .monthly(fixed)
+            case .fixed where fixed > 0: .exactly(fixed)
             default: .statement(remainingCents: statement ?? owed)
             }
             let guessesAmount = mode == .minimum && fixed == 0
@@ -240,7 +240,7 @@ import SwiftData
             cardInfo[index].assumedItemNames = mine.keys.filter { assumed.contains($0) }.compactMap { planNames[$0] }.sorted()
         }
 
-        // Spending this month that hasn't been assigned yet still uses up everyday budget, on the card it was charged to.
+        // Card spending this month that hasn't been assigned yet still uses up the budget counted on that card.
         let billMerchants = Set(patterns.filter { !$0.isIncome }.map { merchantKey(of: $0.id) })
         func unassigned(_ entries: [CashFlowHistoryEntry]) -> Int {
             entries.filter { entry in
@@ -249,22 +249,21 @@ import SwiftData
                     && !billMerchants.contains(Ledger.normalizedMerchant(RecurringDetector.displayName(entry.merchant)))
             }.reduce(0) { $0 + $1.amountCents }
         }
-        var unassignedCents: [String: Int] = ["": unassigned(cash)]
+        var unassignedCents: [String: Int] = [:]
         for (id, history) in historyByCard {
-            let pool = poolOfCard[id].flatMap { groupCards.contains($0) ? $0 : nil } ?? ""
+            guard let pool = poolOfCard[id], groupCards.contains(pool) else { continue }
             unassignedCents[pool, default: 0] += unassigned(history)
         }
 
         let (bills, spending) = budget(in: context, today: today, end: end, current: current, covered: covered, spentOn: spentOn,
                                        itemCards: itemCards, unassignedCents: unassignedCents, calendar: calendar)
-        let everyday = spending[""] ?? []
         for index in cardPayments.indices {
             cardPayments[index].spending = spending[cardPayments[index].id] ?? []
         }
         let inputs = CashFlowInputs(today: today, horizonDays: horizonDays,
                                     startingCents: checking.isEmpty ? manualBalanceCents : checking.reduce(0) { $0 + balance($1) },
                                     cushionCents: cushionCents, schedules: schedules, cards: cardPayments, budgetBills: bills,
-                                    everyday: everyday, savingsCents: savings.reduce(0) { $0 + max(0, balance($1)) })
+                                    savingsCents: savings.reduce(0) { $0 + max(0, balance($1)) })
         let forecast = CashFlowForecast.make(inputs, calendar: calendar)
         let paychecks = schedules.filter(\.isIncome)
         let plan = currentPlan(in: context, current: current)
@@ -383,10 +382,10 @@ import SwiftData
         return Dictionary(items.map { ($0.seriesID, $0.plannedCents) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// Budget items with due days become dated bills; the rest of the plan is everyday spending.
+    /// Budget items with due days become dated bills. Lines without one leave checking on no particular day, so the
+    /// forecast leaves them out, unless they're spent on a card: groups in `spentOn` and items in `itemCards` build up
+    /// on that card, keyed by its payment's ID, and leave checking with its payment.
     /// Months without a plan borrow the latest earlier one. Funds stay in checking until spent, so they're left out.
-    /// Groups in `spentOn` and items in `itemCards` are spent on that card instead, keyed by its payment's ID;
-    /// checking's spending is under "".
     static func budget(in context: ModelContext, today: Date, end: Date, current: MonthKey, covered: Set<UUID>, spentOn: [String: String] = [:],
                        itemCards: [UUID: String] = [:], unassignedCents: [String: Int], calendar: Calendar) -> ([BudgetBill], [String: [EverydaySpending]]) {
         let months = (try? context.fetch(FetchDescriptor<BudgetMonth>(sortBy: [SortDescriptor(\.key)]))) ?? []
@@ -422,7 +421,7 @@ import SwiftData
                     }
                 }
             }
-            for pool in Set(pools.keys).union([""]) {
+            for pool in pools.keys where !pool.isEmpty {
                 var amount = pools[pool] ?? 0
                 if key == current {
                     // What's left this month, but never faster than the plan's usual pace: budget left over on

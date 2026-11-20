@@ -132,7 +132,7 @@ struct CashFlowReviewView: View {
         let pay = proposals.filter(\.isIncome).count
         let bills = proposals.count - pay
         guard !proposals.isEmpty else {
-            return "Nothing to add. Every paycheck and bill your budget plans is already here, or counts as everyday spending."
+            return "Nothing to add. Every paycheck and bill your budget plans that has a date is already here."
         }
         let parts = [pay > 0 ? "\(pay) \(pay == 1 ? "paycheck" : "paychecks")" : nil,
                      bills > 0 ? "\(bills) \(bills == 1 ? "bill" : "bills")" : nil].compactMap { $0 }
@@ -155,7 +155,7 @@ struct CashFlowReviewView: View {
     }
 
     private var cardFooter: String {
-        "Card purchases leave checking when you pay the card. Pick the budget groups you pay with a card so that spending leaves checking with the card payment, not day by day."
+        "Card purchases leave checking when you pay the card. Open a card to choose what you pay: what's owed, or an amount you set."
     }
 
     private func cardDetail(_ account: BankAccount, _ info: CashFlowPlanner.Card?) -> String {
@@ -355,16 +355,22 @@ private struct CardPaymentDetail: View {
             }
             return "Pays \(Money.format(habit.monthlyCents)) a month, what checking usually sends this card, while anything is owed."
         case .fixed:
-            return "Pays this amount each month while anything is owed. Anything more stays on the card."
+            guard account.paymentFixedCents > 0 else {
+                return "Enter what you pay this card each month. Until you do, the statement balance is used."
+            }
+            return "Leaves checking on every due date, whatever the card's balance is. Nothing is added to it."
         case .elsewhere:
             return "Leaves this card out of the forecast, for a card you pay from another account."
         }
     }
 
     private func groupsFooter(_ mode: CardPaymentMode, _ info: CashFlowPlanner.Card?) -> String {
+        if mode == .fixed, account.paymentFixedCents > 0 {
+            return "Spending in these budget groups goes on the card, so the amount you set covers it. Bills in them don't leave checking on their own."
+        }
         var text = mode == .elsewhere
             ? "Spending in these budget groups stays out of checking, since this card is paid from another account."
-            : "Spending in these budget groups builds up on the card and leaves checking with the card payment instead of day by day."
+            : "Spending in these budget groups builds up on the card and leaves checking with the card payment."
         if let names = info?.chargedItemNames, !names.isEmpty {
             text += " \(names.formatted(.list(type: .and))) already count here, since that's where you've charged them."
         }
@@ -626,7 +632,7 @@ private struct BudgetFillView: View {
         if !datedBudgetItems.isEmpty {
             text += " \(datedBudgetItems.formatted(.list(type: .and))) already \(datedBudgetItems.count == 1 ? "counts" : "count") on \(datedBudgetItems.count == 1 ? "its" : "their") due day."
         }
-        return text + " The rest of the budget is spread across the month as everyday spending."
+        return text + " The rest of the budget has no date, so it isn't in the forecast."
     }
 }
 

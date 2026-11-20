@@ -246,6 +246,16 @@ import XCTest
         XCTAssertTrue(includes.exists)
         snap("cashflow-card-groups")
         app.swipeDown(); app.swipeDown(); app.swipeDown()
+        // A set amount is the whole payment: nothing estimated on top, even with Food on the card.
+        element(app, "card-pay-mode").tap()
+        app.buttons["A set amount"].tap()
+        let each = app.textFields["Each month"]
+        XCTAssertTrue(each.waitForExistence(timeout: 5))
+        each.tap()
+        each.typeText("450")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Nothing is added to it")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(includes.exists)
+        snap("cashflow-card-set-amount")
         element(app, "card-pay-mode").tap()
         app.buttons["Minimum payment"].tap()
         XCTAssertTrue(app.staticTexts["Minimum due"].waitForExistence(timeout: 5))

@@ -122,12 +122,13 @@ import Testing
         #expect(events.first?.date == today && events.first?.expectedDate == day(11, 17))
     }
 
-    @Test func everydaySpendingSpreadsToTheCent() {
-        let inputs = CashFlowInputs(today: day(11, 28), horizonDays: 3, startingCents: 0,
-                                    everyday: [EverydaySpending(start: day(11, 28), end: day(11, 30), amountCents: 10_00)])
+    @Test func checkingOnlyMovesOnDatedMoney() {
+        let inputs = CashFlowInputs(today: day(11, 28), horizonDays: 3, startingCents: 100_00,
+                                    budgetBills: [BudgetBill(seriesID: UUID(), name: "Water", date: day(11, 29), amountCents: 40_00)])
         let forecast = CashFlowForecast.make(inputs, calendar: calendar)
-        #expect(forecast.days.map(\.everydayCents) == [3_34, 3_33, 3_33])
-        #expect(forecast.days.last?.endCents == -10_00)
+        // Nothing is spread across the days: the balance sits still until a bill or paycheck lands.
+        #expect(forecast.days.map(\.startCents) == [100_00, 100_00, 60_00])
+        #expect(forecast.days.map(\.endCents) == [100_00, 60_00, 60_00])
     }
 
     @Test func aBigCardBalanceBecomesAPaymentPlan() {
@@ -158,6 +159,8 @@ import Testing
         #expect(payments(.statement(remainingCents: 0)) == [1_000_00])
         #expect(payments(.monthly(300_00)) == [300_00, 300_00])
         #expect(payments(.monthly(800_00)) == [800_00, 200_00])
+        // A set amount is the expense: every due date, even past what's owed today.
+        #expect(payments(.exactly(800_00)) == [800_00, 800_00])
 
         // Paid in parts with each paycheck since the last due date.
         let inputs = CashFlowInputs(
@@ -182,14 +185,16 @@ import Testing
         #expect(payments(.statement(remainingCents: 600_00)).map(\.cents) == [600_00, 2_900_00])
         #expect(payments(.statement(remainingCents: 600_00)).map(\.spendingCents) == [0, 2_500_00])
         #expect(payments(.balance).map(\.cents) == [3_000_00, 1_000_00])
-        // A set amount keeps going while anything is owed.
+        // The minimum keeps going while anything is owed; a set amount ignores the estimate altogether.
         #expect(payments(.monthly(1_000_00)).map(\.cents) == [1_000_00, 1_000_00])
+        #expect(payments(.exactly(450_00)).map(\.cents) == [450_00, 450_00])
+        #expect(payments(.exactly(450_00)).allSatisfy { $0.spendingCents == 0 })
 
         let inputs = CashFlowInputs(today: today, horizonDays: 60, startingCents: 5_000_00,
                                     cards: [CardPayment(id: "card", name: "Card", dueDay: 20, owedCents: 1_000_00,
                                                         plan: .statement(remainingCents: 600_00), spending: november)])
         let forecast = CashFlowForecast.make(inputs, calendar: calendar)
-        #expect(forecast.days.allSatisfy { $0.everydayCents == 0 }, "card spending doesn't leave checking day by day")
+        #expect(forecast.days.allSatisfy { !$0.events.isEmpty || $0.endCents == $0.startCents }, "card spending doesn't leave checking day by day")
         #expect(forecast.events.last?.detail == "Includes about $2,500 of budget spending")
     }
 
@@ -272,8 +277,8 @@ import Testing
         #expect(snapshot.cardsWithoutDueDay.map(\.name) == ["Card"])
         let names = snapshot.forecast.events.map(\.name)
         #expect(names.contains("Landlord LLC") && !names.contains("Rent"))
-        // November has no plan, so October's groceries carry over and spread across it.
-        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 310_00 / 30 + 1)
+        // Groceries have no date, so they never move checking: it changes only on days something is scheduled.
+        #expect(snapshot.forecast.days.allSatisfy { !$0.events.isEmpty || $0.endCents == $0.startCents })
 
         let streaming = try #require(snapshot.patterns.first { $0.name == "Streaming" })
         CashFlowPlanner.decision(for: streaming, in: context).isIgnored = true
@@ -380,8 +385,6 @@ import Testing
         #expect(links["out:granite auto finance"] == lines["Car loan"]?.seriesID)
         #expect(links["out:harbor home loans#1"] == lines["Home loan"]?.seriesID && links["out:harbor home loans#2"] == lines["Home loan"]?.seriesID)
         #expect(snapshot.cards.first?.coversSeriesID == lines["Credit card"]?.seriesID)
-        // Only groceries are left as everyday spending; November borrows October's plan.
-        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 20_00)
 
         // Saying a bill isn't in the budget puts its line back.
         let granite = try #require(snapshot.patterns.first { $0.id == "out:granite auto finance" })
@@ -389,7 +392,6 @@ import Testing
         card.paymentCoversSeriesID = RecurringFlow.notInBudget
         snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 35, calendar: calendar)
         #expect(snapshot.cards.first?.coversSeriesID == nil)
-        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == (600_00 + 312_45 + 150_00) / 30 + 1)
     }
 
     @Test func budgetGroupsPaidByCardLeaveCheckingWithThePayment() throws {
@@ -410,18 +412,24 @@ import Testing
         try context.save()
 
         func snapshot() -> CashFlowPlanner.Snapshot { CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar) }
-        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 900_00 / 30)
+        // Neither line has a date or a card yet, so nothing leaves checking.
+        #expect(snapshot().forecast.events.isEmpty && snapshot().forecast.days.last?.endCents == 5_000_00)
         #expect(snapshot().cards.first?.payments.isEmpty == true)
 
         card.cardGroupNames = ["Food"]
         // Groceries build up on the card: October's last day and Nov 1–25 close into the Dec 20 statement.
-        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 300_00 / 30)
         #expect(snapshot().cards.first?.payments.map(\.amountCents) == [-(600_00 / 31 + 25 * 20_00)])
         #expect(snapshot().cards.first?.payments.first?.date == day(12, 20))
 
+        // A set amount is all that leaves checking, on each due date, with nothing estimated on top.
+        card.paymentMode = .fixed
+        card.paymentFixedCents = 450_00
+        let set = snapshot().cards.first?.payments ?? []
+        #expect(set.map(\.amountCents) == [-450_00, -450_00] && set.map(\.date) == [day(11, 20), day(12, 20)])
+        #expect(set.allSatisfy { !$0.isEstimate && $0.detail == nil })
+
         // Paid from another account: groceries leave the forecast.
         card.paymentMode = .elsewhere
-        #expect(snapshot().forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 300_00 / 30)
         #expect(snapshot().forecast.events.allSatisfy { $0.kind != .card })
     }
 
@@ -484,7 +492,6 @@ import Testing
         #expect(links["Bright Path Learning"] == lines["Tutoring"]?.seriesID)
         // Groceries were charged to the card, so they build up there; Electric was paid from checking and stays there.
         #expect(snapshot.cards.first?.chargedItemNames == ["Groceries"] && snapshot.cards.first?.assumedItemNames == [])
-        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 410_00 / 30 + 1)
         #expect(snapshot.cards.first?.payments.map(\.amountCents) == [-55_00, -(600_00 / 31 + 25 * 20_00)])
         #expect(snapshot.missingIncome == [CashFlowPlanner.MissingIncome(name: "Side work", cents: 400_00)])
     }
@@ -523,7 +530,7 @@ import Testing
         let snapshot = CashFlowPlanner.snapshot(in: context, today: today, horizonDays: 60, calendar: calendar)
         #expect(snapshot.cards.first?.chargedItemNames == ["Dining", "Groceries"])
         #expect(snapshot.cards.first?.assumedItemNames == ["Gifts"])
-        #expect(snapshot.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == 200_00 / 30 + 1)
+        #expect(snapshot.forecast.days.allSatisfy { !$0.events.isEmpty || $0.endCents == $0.startCents })
     }
 
     @Test func budgetLinesBecomePaychecksAndBills() throws {
@@ -592,8 +599,8 @@ import Testing
         #expect(events.filter { $0.name == "Paycheck 1" }.map(\.date) == [day(11, 15), day(12, 15)])
         #expect(events.filter { $0.name == "Paycheck 2" }.map(\.date) == [day(11, 28), day(12, 28)])
         #expect(events.filter { $0.name == "Rent" }.map(\.amountCents) == [-1_500_00, -1_500_00])
-        // Rent is a dated bill now, so only groceries and the gym are spread over November.
-        #expect(after.forecast.days.first { $0.date == day(11, 10) }?.everydayCents == (600_00 + 40_00) / 30 + 1)
+        // Groceries and the gym have no date, so they stay out of the forecast.
+        #expect(after.forecast.days.allSatisfy { !$0.events.isEmpty || $0.endCents == $0.startCents })
         // Adding the same ones again does nothing.
         #expect(CashFlowPlanner.add(chosen, in: context).isEmpty)
 

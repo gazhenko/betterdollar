@@ -198,10 +198,7 @@ private struct DayDetail: View {
                     }
                 }
             }
-            if day.everydayCents > 0 {
-                LedgerLine(label: "Everyday spending", note: "estimate", cents: -day.everydayCents)
-            }
-            if day.events.isEmpty && day.everydayCents == 0 {
+            if day.events.isEmpty {
                 Text("Nothing scheduled.").font(.subheadline).foregroundStyle(Ink.secondary)
             }
             DoubleRule(color: Ink.rule)

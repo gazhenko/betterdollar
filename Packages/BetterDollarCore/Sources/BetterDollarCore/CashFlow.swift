@@ -386,8 +386,7 @@ public struct CardHabit: Sendable, Hashable {
 }
 
 /// A credit card's payments. Card purchases leave checking only when the card is paid: what's owed today,
-/// plus budget spending from the groups paid with the card as it builds up. Other card spending after today
-/// is counted as everyday spending.
+/// plus budget spending from the groups paid with the card as it builds up.
 public struct CardPayment: Sendable, Hashable, Identifiable {
     /// One due date's payment and how much of it is budget spending charged after today.
     public struct Payment: Sendable, Hashable {
@@ -403,6 +402,8 @@ public struct CardPayment: Sendable, Hashable, Identifiable {
         case statement(remainingCents: Int)
         /// The same amount each due date, while anything is owed.
         case monthly(Int)
+        /// An amount the person set, taken on every due date whatever the card owes. Nothing is added to it.
+        case exactly(Int)
     }
 
     public var id: String
@@ -488,6 +489,8 @@ public struct CardPayment: Sendable, Hashable, Identifiable {
                 payments.append(Payment(date: date, cents: paid, spendingCents: 0))
                 previous = date
             }
+        case .exactly(let cents):
+            payments = dates.map { Payment(date: $0, cents: cents, spendingCents: 0) }
         }
         return payments.filter { $0.cents > 0 }
     }
@@ -543,7 +546,8 @@ public struct BudgetBill: Sendable, Hashable {
     }
 }
 
-/// Budgeted spending without a due day (groceries, gas), spread evenly from `start` through `end`.
+/// Budgeted spending charged to a card, building up evenly from `start` through `end` until the card is paid.
+/// Checking never loses it day by day: the forecast only moves on dated money in and out.
 public struct EverydaySpending: Sendable, Hashable {
     public var start: Date
     public var end: Date
@@ -565,12 +569,11 @@ public struct CashFlowInputs: Sendable {
     public var schedules: [CashFlowSchedule]
     public var cards: [CardPayment]
     public var budgetBills: [BudgetBill]
-    public var everyday: [EverydaySpending]
     /// Money in savings that could cover a dip.
     public var savingsCents: Int
 
     public init(today: Date, horizonDays: Int = 60, startingCents: Int, cushionCents: Int = 0, schedules: [CashFlowSchedule] = [],
-                cards: [CardPayment] = [], budgetBills: [BudgetBill] = [], everyday: [EverydaySpending] = [], savingsCents: Int = 0) {
+                cards: [CardPayment] = [], budgetBills: [BudgetBill] = [], savingsCents: Int = 0) {
         self.today = today
         self.horizonDays = horizonDays
         self.startingCents = startingCents
@@ -578,7 +581,6 @@ public struct CashFlowInputs: Sendable {
         self.schedules = schedules
         self.cards = cards
         self.budgetBills = budgetBills
-        self.everyday = everyday
         self.savingsCents = savingsCents
     }
 }
@@ -602,8 +604,6 @@ public struct CashFlowEvent: Sendable, Hashable, Identifiable {
 public struct CashFlowDay: Sendable, Hashable, Identifiable {
     public var date: Date
     public var events: [CashFlowEvent]
-    /// Everyday spending spread onto this day.
-    public var everydayCents: Int
     public var startCents: Int
     public var endCents: Int
 
@@ -612,7 +612,7 @@ public struct CashFlowDay: Sendable, Hashable, Identifiable {
 }
 
 public struct CashFlowSuggestion: Sendable, Hashable, Identifiable {
-    public enum Kind: String, Sendable { case moveSavings, moveBill, splitPayment, spendLess, needMore }
+    public enum Kind: String, Sendable { case moveSavings, moveBill, splitPayment, needMore }
 
     public var kind: Kind
     public var title: String
@@ -649,7 +649,7 @@ public struct CashFlowForecast: Sendable {
         let today = calendar.startOfDay(for: inputs.today)
         let end = calendar.date(byAdding: .day, value: max(1, inputs.horizonDays) - 1, to: today) ?? today
         let events = events(for: inputs, today: today, end: end, calendar: calendar)
-        let days = simulate(startingCents: inputs.startingCents, events: events, everyday: inputs.everyday, from: today, through: end, calendar: calendar)
+        let days = simulate(startingCents: inputs.startingCents, events: events, from: today, through: end, calendar: calendar)
         var forecast = CashFlowForecast(today: today, startingCents: inputs.startingCents, cushionCents: inputs.cushionCents,
                                         days: days, suggestions: [])
         forecast.suggestions = suggestions(for: forecast, events: events, inputs: inputs, calendar: calendar)
@@ -712,7 +712,8 @@ public struct CashFlowForecast: Sendable {
         return events
     }
 
-    static func simulate(startingCents: Int, events: [CashFlowEvent], everyday: [EverydaySpending], from today: Date, through end: Date,
+    /// The balance changes only on days something dated happens.
+    static func simulate(startingCents: Int, events: [CashFlowEvent], from today: Date, through end: Date,
                          calendar: Calendar) -> [CashFlowDay] {
         let byDay = Dictionary(grouping: events, by: \.date)
         var balance = startingCents
@@ -722,10 +723,9 @@ public struct CashFlowForecast: Sendable {
             let dayEvents = (byDay[date] ?? []).sorted {
                 ($0.kind == .payday ? 0 : 1, $0.amountCents, $0.name) < ($1.kind == .payday ? 0 : 1, $1.amountCents, $1.name)
             }
-            let spread = everyday.reduce(0) { $0 + share(of: $1, on: date, calendar: calendar) }
             let start = balance
-            balance += dayEvents.reduce(0) { $0 + $1.amountCents } - spread
-            days.append(CashFlowDay(date: date, events: dayEvents, everydayCents: spread, startCents: start, endCents: balance))
+            balance += dayEvents.reduce(0) { $0 + $1.amountCents }
+            days.append(CashFlowDay(date: date, events: dayEvents, startCents: start, endCents: balance))
             guard let next = calendar.date(byAdding: .day, value: 1, to: date) else { break }
             date = next
         }
@@ -786,7 +786,7 @@ public struct CashFlowForecast: Sendable {
         let need = dip.neededCents
         func day(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).day()) }
         func rerun(_ changed: [CashFlowEvent]) -> [CashFlowDay] {
-            simulate(startingCents: inputs.startingCents, events: changed, everyday: inputs.everyday, from: forecast.today, through: end, calendar: calendar)
+            simulate(startingCents: inputs.startingCents, events: changed, from: forecast.today, through: end, calendar: calendar)
         }
         /// Checking stays at or above the cushion from the dip's start through `date`.
         func clears(_ days: [CashFlowDay], through date: Date) -> Bool {
@@ -860,13 +860,6 @@ public struct CashFlowForecast: Sendable {
             }
         }
 
-        let window = forecast.days.filter { $0.date <= dip.lowest.date }
-        let everyday = window.reduce(0) { $0 + $1.everydayCents }
-        if everyday >= need, !window.isEmpty {
-            let perDay = (need + window.count - 1) / window.count
-            result.append(CashFlowSuggestion(kind: .spendLess, title: "Spend \(Money.format(perDay)) less a day until \(day(dip.lowest.date))",
-                                             detail: "This forecast expects about \(Money.format(everyday / window.count)) a day of everyday spending."))
-        }
         if result.isEmpty {
             result.append(CashFlowSuggestion(kind: .needMore, title: "Checking needs \(Money.format(need)) more by \(day(dip.start))",
                                              detail: "No bill can move far enough on its own. Lower a bill, add money to checking, or pay part of one later."))

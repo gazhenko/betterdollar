@@ -111,7 +111,6 @@ struct RunwayView: View {
     private var register: some View {
         let days = forecast.days.filter { !$0.events.isEmpty }
         let shown = showsAll ? days : Array(days.prefix(8))
-        let perDay = forecast.days.reduce(0) { $0 + $1.everydayCents } / max(1, forecast.days.count)
         return VStack(alignment: .leading, spacing: 0) {
             Text("Coming up")
                 .font(Typeface.groupTitle)
@@ -130,12 +129,6 @@ struct RunwayView: View {
             if days.count > shown.count || showsAll && days.count > 8 {
                 Button(showsAll ? "Show less" : "Show all \(days.count) days") { withAnimation(.snappy) { showsAll.toggle() } }
                     .font(.subheadline.weight(.semibold))
-                    .padding(.top, 12)
-            }
-            if perDay > 0 {
-                Text("Balances include about \(Money.format(perDay)) a day of everyday spending from your budget.")
-                    .font(.caption)
-                    .foregroundStyle(Ink.secondary)
                     .padding(.top, 12)
             }
         }
